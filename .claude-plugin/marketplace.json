@@ -1,0 +1,5 @@
+{
+  "name": "inline-notes",
+  "owner": { "name": "Daniil Matsyutsya" },
+  "plugins": [{ "name": "inline-notes", "source": "./" }]
+}

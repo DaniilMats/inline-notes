@@ -1,0 +1,1 @@
+{ "name": "inline-notes", "version": "0.4.0", "description": "/fb: line comments on a Claude reply in a review pane, batched back into the prompt (port of the pi /fb reviewer)", "types": "./types/index.d.ts" }
