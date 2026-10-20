@@ -10,7 +10,8 @@ import type { FbReview } from '../types'
 import { GENERATIONS, fieldKeys, fieldStart, markOf } from './field'
 import type { Field } from './field'
 import { caretOf, windowOf } from './layout'
-import { buildPrompt, commentCount, handleKey, scrollBy, startReview, walkBlocks } from './review'
+import { blocksOf, buildPrompt, commentCount, handleKey, linesOf, scrollBy, startReview, walkBlocks } from './review'
+import type { Outcome } from './review'
 
 const PANE = 'fb'
 const ARROW_UP = 'arrow-up'
@@ -22,11 +23,12 @@ const PALETTES = {
   dark: { background: '#1f2228', highlight: '#30353f' },
   light: { background: '#fbfbfc', highlight: '#e6e9f0' },
 }
-async function paletteOf($: EngineInterface) {
+async function themeOf($: EngineInterface): Promise<keyof typeof PALETTES> {
   const theme = (await $.config.list().catch(() => [])).find(row => row.key === 'theme')?.value
 
-  return typeof theme === 'string' && theme.includes('light') ? PALETTES.light : PALETTES.dark
+  return typeof theme === 'string' && theme.includes('light') ? 'light' : 'dark'
 }
+const paletteOf = async ($: EngineInterface) => PALETTES[await themeOf($)]
 const review = atom({ plugin: 'inline-notes', key: 'review' } as const, null as FbReview | null)
 
 // The key field holds an invisible mark (./field.ts) and nothing else: each handled change
@@ -47,13 +49,13 @@ let screen = { columns: 0, rows: 0 }
 // ponytail: module state; after a reload the first change waits for a draw to refit
 let region = { columns: 0, rows: 0 }
 
-type Message = { type: 'sync'; review: FbReview } | { type: 'finish'; outcome: 'submit' | 'cancel'; review: FbReview }
+type Message = { type: 'sync'; review: FbReview } | { type: 'finish'; outcome: Outcome; review: FbReview }
 
 // The data comes from our own module, but it crossed a boundary as `unknown`.
 function asMessage(data: unknown): Message | undefined {
   const m = data as Partial<Message> | null
   if (!m || typeof m.review?.opened !== 'number') return undefined
-  if (m.type === 'sync' || (m.type === 'finish' && (m.outcome === 'submit' || m.outcome === 'cancel'))) return m as Message
+  if (m.type === 'sync' || (m.type === 'finish' && (m.outcome === 'submit' || m.outcome === 'cancel' || m.outcome === 'web'))) return m as Message
   return undefined
 }
 
@@ -90,8 +92,43 @@ async function close($: EngineInterface) {
   await $.ui.close({ id: PANE }).catch(() => undefined) // already closed with × — nothing to do
 }
 
+// The review as a page of its own (w): web/review.html with the review inlined, written to the
+// temp folder and opened in the browser. The pane stays open; the page's comments come back
+// through the clipboard, as the same prompt s builds.
+async function openWeb($: EngineInterface, r: FbReview) {
+  let status: string
+  try {
+    const page = await $.fs.read(`${$.plugin.root}/web/review.html`)
+    const data = {
+      index: r.index,
+      opened: r.opened,
+      theme: await themeOf($),
+      lines: linesOf(r.text),
+      blocks: blocksOf(r.text),
+      comments: r.comments,
+      nextId: r.nextId,
+      intro: buildPrompt({ ...r, comments: [] }), // the page appends its comments as buildPrompt does
+      preview: r.preview,
+    }
+    // A function, so a `$&` in the reply is not read as a pattern; `<` escaped, so a `</script>` in it stays data.
+    const html = page.replace('"__FB_DATA__"', () => JSON.stringify(data).replace(/</g, '\\u003c'))
+    const path = `${((await $.env.get('TMPDIR')) ?? '/tmp').replace(/\/$/, '')}/inline-notes-${r.opened}.html`
+    await $.fs.write(path, html)
+    // open on macOS, xdg-open on Linux.
+    const shown = await $.process
+      .run(['open', path])
+      .catch(() => $.process.run(['xdg-open', path]))
+      .then(run => run.exitCode === 0, () => false)
+    status = shown ? 'Ревью открыто в браузере: там «Скопировать промпт», затем вставьте сюда.' : `Браузер не открылся: откройте ${path}`
+  } catch (error) {
+    status = `Не удалось открыть в браузере: ${error instanceof Error ? error.message : String(error)}`
+  }
+  await update($, review, cur => (cur ? bump(cur, { status }) : cur))
+}
+
 // The comments leave the review only once the prompt has them; a refusal keeps everything.
-async function finish($: EngineInterface, outcome: 'submit' | 'cancel', r: FbReview) {
+async function finish($: EngineInterface, outcome: Outcome, r: FbReview) {
+  if (outcome === 'web') return openWeb($, r)
   if (outcome === 'cancel') {
     await close($)
     $.ui.toast('Ревью отменено.')

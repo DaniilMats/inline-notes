@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 — 2026-10-20
+
+- `w` in the pane opens the review as a page in your browser: the reply at a comfortable reading width, set in Literata, with comments added by a click or a drag across the line numbers and the pane's own keys. **Скопировать промпт** puts the same prompt `s` builds on the clipboard; paste it into Claude Code.
+- The page follows the Claude Code theme, keeps its comments across a reload, and shows raw HTML from a reply as text, never running it.
+
 ## 0.5.1 — 2026-10-20
 
 - The terminal's caret no longer sits in the pane's corner and no longer jumps there while you type: it stands on the cursor's `▌` marker, and inside the comment box at the insertion point.

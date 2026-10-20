@@ -176,6 +176,64 @@ test('f asks the pane for the whole screen and gives it back', async ($, on) => 
   expect(await ui.find({ text: /блок 1\/6 \(L1\)/, in: 'review' })).toBeDefined()
 })
 
+test('w writes the review as a page, the reply kept as data, and opens it in the browser', async ($, on) => {
+  const reply = 'цена $& и </script><b>x</b>\nвторая'
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: reply, toolUses: [] }] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 7 }))
+  on('env.get', () => ({ value: '/tmp/fb/' }))
+  on('fs.read', () => ({ value: '<script type="application/json">"__FB_DATA__"</script>' }))
+  const writes: { path: string; text: string }[] = []
+  on('fs.write', (_, e) => {
+    writes.push({ path: e.path, text: e.text })
+    return { value: undefined }
+  })
+  const runs: (readonly string[])[] = []
+  on('process.run', (_, e) => {
+    runs.push(e.argv)
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+
+  await run($, '')
+  const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
+  for (const key of ['c', 'x', 'return', 'ц']) await ui.key({ key, in: 'review' }) // w on the Russian layout
+  expect(runs).toEqual([['open', '/tmp/fb/inline-notes-7.html']])
+  expect(writes[0]?.path).toBe('/tmp/fb/inline-notes-7.html')
+  const html = writes[0]!.text
+  expect(html.match(/<\/script>/g)).toHaveLength(1) // the reply's own tag stays inside the data
+  const data = JSON.parse(html.slice(html.indexOf('>') + 1, html.lastIndexOf('</script>')))
+  expect(data.lines).toEqual(['цена $& и </script><b>x</b>', 'вторая'])
+  expect(data.comments).toEqual([{ id: 1, start: 0, end: 0, body: 'x' }])
+  // The page appends each comment as buildPrompt does: the intro is the prompt with none.
+  const r = saveDraft(startAdd(startReview(1, reply, false)), 'x')
+  expect(`${data.intro}1. L1\n> 1: ${data.lines[0]}\nКомментарий:\nx`).toBe(buildPrompt(r))
+  expect(await ui.find({ text: /Ревью открыто в браузере/, in: 'review' })).toBeDefined()
+})
+
+test('w from the key field, where /fb leaves the keys, opens the page and the keys after it still move', async ($, on) => {
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: REPLY, toolUses: [] }] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 1 }))
+  on('env.get', () => ({ value: undefined }))
+  on('fs.read', () => ({ value: '"__FB_DATA__"' }))
+  on('fs.write', () => ({ value: undefined }))
+  const runs: (readonly string[])[] = []
+  on('process.run', (_, e) => {
+    runs.push(e.argv)
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+
+  await run($, '')
+  const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
+  await ui.input({ key: 'keys', text: '\u2060ц', kind: 'change' })
+  expect(runs).toEqual([['open', '/tmp/inline-notes-1.html']]) // no TMPDIR: /tmp
+  await ui.input({ key: 'keys', text: '\u2060цj', kind: 'change' })
+  expect(runs).toHaveLength(1)
+  expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
+})
+
 test('rendered: the Client walks blocks with the arrows and boxes the draft under its block', async ($, on) => {
   on('session.messages', () => ({ value: [{ role: 'assistant', text: MD, toolUses: [] }] }))
   on('ui.open', () => ({ value: { isPlaced: true } }))

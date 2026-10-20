@@ -6,7 +6,7 @@
     {
       "name": "inline-notes",
       "source": "./",
-      "description": "/fb: comment on any line of a Claude reply, like a pull request, and send every comment back in one prompt"
+      "description": "/fb: comment on any line of a Claude reply, in the terminal or the browser, like a pull request, and send every comment back in one prompt"
     }
   ]
 }

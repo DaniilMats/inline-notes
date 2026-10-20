@@ -223,7 +223,7 @@ ${blocks}`
 
 // The same physical keys on the Russian ЙЦУКЕН layout: о is j, л is k, П is G.
 const RU: Record<string, string> = {
-  о: 'j', л: 'k', м: 'v', с: 'c', у: 'e', в: 'd', т: 'n', ь: 'm', ы: 's', й: 'q', п: 'g', г: 'u', а: 'f',
+  о: 'j', л: 'k', м: 'v', с: 'c', у: 'e', в: 'd', т: 'n', ь: 'm', ы: 's', й: 'q', п: 'g', г: 'u', а: 'f', ц: 'w',
 }
 
 /** What a key names, layout-independent: `j`, `G`, `ctrl+d`, `return`, `up`. */
@@ -291,12 +291,15 @@ export function editDraft(r: FbReview, ev: { key: string; ctrl?: true; shift?: t
   return { ...r, draftText: chars.join(''), draftCaret: at }
 }
 
+/** What a key asks of the hooks: fill the prompt, drop the review, or open it in the browser (which keeps it). */
+export type Outcome = 'submit' | 'cancel' | 'web'
+
 /** One key against the review: the next state, or the review's outcome. */
 export function handleKey(
   r: FbReview,
   ev: { key: string; ctrl?: true; shift?: true; meta?: true },
   page: number,
-): FbReview | 'submit' | 'cancel' {
+): FbReview | Outcome {
   if (r.help) return { ...r, help: false } // any key closes the help
   if (r.draft) return ev.key === 'return' && !ev.shift ? saveDraft(r, r.draftText) : editDraft(r, ev)
   const name = keyName(ev)
@@ -318,6 +321,7 @@ export function handleKey(
     case 'N': return jumpPrev(r)
     case 'm': return setCursor({ ...r, preview: !r.preview }, r.cursor)
     case 'f': return { ...r, wide: !r.wide }
+    case 'w': return 'web'
     case 's': return arm(r, 'submit')
     case 'q': return arm(r, 'cancel')
     default: return r

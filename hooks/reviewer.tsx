@@ -9,6 +9,7 @@ import type { ClientSurface, RenderElement } from 'claude-code'
 import type { FbReview } from '../types'
 import { BLOCK_GUTTER, GUTTER, HINT_GAP, draftRows, headerRows, hintsOf, isTable, measure, rowsOf, tableRows, titleOf, windowOf } from './layout'
 import { blockIndex, blocksOf, commentsAt, currentRange, handleKey, isSelected, lineRef, setCursor, startAdd, startEdit } from './review'
+import type { Outcome } from './review'
 
 /** `background` paints the body, `highlight` the cursor's line; the header stays on the pane's own frame color. */
 type Props = { review: FbReview; background: string; highlight: string }
@@ -30,6 +31,7 @@ const HELP: [string, string][] = [
   ['n / N (т / Т)', 'следующий / предыдущий комментарий'],
   ['m (ь)', 'отрисованный markdown: таблицы как в ответе, курсор и комментарии — по блокам (абзац, пункт, таблица, код)'],
   ['f (а)', 'панель на весь экран и обратно'],
+  ['w (ц)', 'ревью в браузере: строки во всю ширину, комментарии мышью; «Скопировать промпт» — и вставить сюда'],
   ['s (ы)', 'собрать комментарии в поле ввода; с --send — отправить сразу, двойным нажатием'],
   ['q (й)', 'закрыть ревью; с комментариями — двойным нажатием'],
   ['Esc', 'вернуться в поле ввода Claude; панель и комментарии остаются, /fb или клик возвращают'],
@@ -67,7 +69,7 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
   const { lines, width, content, heights } = measure(r, inner)
 
   // Every change made here: a higher rev, a refit of the window, a copy to the hooks.
-  const apply = (next: FbReview | 'submit' | 'cancel', from: State) => {
+  const apply = (next: FbReview | Outcome, from: State) => {
     if (typeof next === 'string') return surface.post({ type: 'finish', outcome: next, review: from.review })
     if (next === from.review) return
     const moved = { ...next, rev: (from.review.rev ?? 0) + 1 }

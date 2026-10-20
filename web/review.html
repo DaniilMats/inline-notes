@@ -1,0 +1,612 @@
+<!doctype html>
+<!-- The /fb review as a page of its own (w in the pane). The hooks inline the review in place of
+     the fb-data block's placeholder; comments go back as the prompt s builds, through the clipboard. -->
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ревью ответа · inline-notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* The reply is read in Literata, a text face made for long reading on screens; the page and
+     your comments speak in the system face; code in JetBrains Mono. One accent, used sparingly:
+     the cursor, a selection, a commented line, the one action that sends. */
+  :root {
+    --bg: #1c1d20;
+    --surface: #25262a;
+    --band: #26282c;
+    --rule: #303237;
+    --text: #d8d7d3;
+    --muted: #8d8f94;
+    --faint: #5a5d63;
+    --accent: #d0896c;
+    --on-accent: #1c1d20;
+    --accent-soft: rgb(208 137 108 / 0.4);
+    --tint: rgb(208 137 108 / 0.09);
+    --code-bg: #232428;
+    --read: "Literata", Georgia, "PT Serif", serif;
+    --ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --gut: 56px;
+    --measure: 42rem;
+    --pad: clamp(16px, 4vw, 48px);
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #f8f8f6;
+    --surface: #ffffff;
+    --band: #f0efeb;
+    --rule: #e4e3de;
+    --text: #2b2b29;
+    --muted: #72726c;
+    --faint: #b3b2ab;
+    --accent: #a65638;
+    --on-accent: #ffffff;
+    --accent-soft: rgb(166 86 56 / 0.35);
+    --tint: rgb(166 86 56 / 0.07);
+    --code-bg: #f0efeb;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html { font-size: 16px; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--ui); -webkit-font-smoothing: antialiased; }
+  body.dragging { user-select: none; cursor: ns-resize; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .wrap { width: 100%; max-width: calc(var(--gut) + var(--measure) + 2 * var(--pad)); margin: 0 auto; padding: 0 var(--pad); }
+
+  /* The bar: which reply, and how it is drawn. */
+  .bar { position: sticky; top: 0; z-index: 3; background: var(--bg); border-bottom: 1px solid var(--rule); }
+  .bar .wrap { display: flex; align-items: center; gap: 16px; height: 56px; }
+  .id { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; padding-left: var(--gut); }
+  .id h1 { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .meta { min-width: 0; overflow: hidden; color: var(--muted); font-size: 13.5px; white-space: nowrap; text-overflow: ellipsis; }
+  .seg { display: inline-flex; gap: 2px; }
+  .seg button, .ghost { padding: 5px 10px; border: 0; border-radius: 7px; background: none; color: var(--muted); font-size: 13.5px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--band); color: var(--text); }
+  .seg button:hover, .ghost:hover { color: var(--text); }
+
+  /* The reply: a row per source line, or per block when rendered. */
+  .sheet { padding-top: 28px; padding-bottom: 160px; }
+  .row { --lh: 27px; position: relative; display: grid; grid-template-columns: var(--gut) minmax(0, 1fr); scroll-margin: 80px 0 140px; }
+  .row::before { content: ""; position: absolute; inset: 0 auto 0 calc(var(--gut) - 12px); width: 2px; border-radius: 1px; }
+  .row.is-sel { background: var(--tint); }
+  .row.is-cursor { background: var(--band); }
+  .row.is-cursor::before, .row.is-sel::before { background: var(--accent); }
+  .row.is-sel:not(.is-cursor)::before { background: var(--accent-soft); }
+  .gut { position: relative; display: flex; justify-content: flex-end; align-items: flex-start; gap: 7px; padding-right: 22px; color: var(--faint); font: 12px/var(--lh) var(--ui); font-variant-numeric: tabular-nums; cursor: pointer; user-select: none; }
+  .gut .c { flex: none; width: 5px; height: 5px; margin-top: calc((var(--lh) - 5px) / 2); border-radius: 50%; background: var(--accent); }
+  .gut::after { content: "+"; position: absolute; top: 0; right: 22px; color: var(--accent); font: 500 15px/var(--lh) var(--ui); opacity: 0; transition: opacity 0.12s; }
+  .row:hover .gut::after { opacity: 1; }
+  .row:hover .gut .n { opacity: 0; } /* the + stands where the line's number was */
+  .row:hover .gut, .row.is-cursor .gut, .row.is-sel .gut { color: var(--muted); }
+  .text { min-height: var(--lh); padding-right: 12px; font: 17px/var(--lh) var(--read); overflow-wrap: anywhere; }
+
+  /* Source lines keep their markup, quieted; code and tables stay monospaced. */
+  .mk { color: var(--faint); }
+  .url { color: var(--muted); }
+  .text code, .md code { padding: 0.1em 0.3em; border-radius: 4px; background: var(--code-bg); font: 0.82em var(--mono); }
+  .text strong, .md strong { font-weight: 600; }
+  .row.h .text { font-weight: 600; font-size: 18px; }
+  .row.li .text { padding-left: 1.1em; text-indent: -1.1em; }
+  .row.q .text { color: var(--muted); }
+  .row.code { --lh: 22px; }
+  .row.code .text { padding: 0 14px; background: var(--code-bg); font: 13.5px/var(--lh) var(--mono); white-space: pre-wrap; }
+  .row.code.first .text { padding-top: 8px; border-radius: 8px 8px 0 0; }
+  .row.code.last .text { padding-bottom: 8px; border-radius: 0 0 8px 8px; }
+  .row.code.first.last .text { border-radius: 8px; }
+  .row.code.first .gut { padding-top: 8px; }
+  .row.code .text .mk { color: var(--muted); }
+  .row.blank { --lh: 14px; }
+  .row.blank:not(:hover):not(.is-cursor):not(.is-sel) .n { visibility: hidden; }
+
+  .row.block { --lh: 27px; padding-block: 6px; }
+  .row.block .gut { font-size: 11.5px; }
+  .md { font: 17px/1.6 var(--read); }
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md pre, .md table, .md blockquote { margin: 0; }
+  .md h1, .md h2, .md h3, .md h4 { margin: 0; font-size: 1.06em; font-weight: 600; line-height: 1.4; }
+  .md h1 { font-size: 1.2em; }
+  .md ul, .md ol { padding-left: 1.3em; }
+  .md pre { padding: 10px 14px; overflow-x: auto; border-radius: 8px; background: var(--code-bg); font: 13.5px/1.6 var(--mono); }
+  .md pre code { padding: 0; background: none; font: inherit; }
+  .md table { border-collapse: collapse; font: 14.5px/1.45 var(--ui); }
+  .md th, .md td { padding: 6px 12px 6px 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+  .md th { font-weight: 600; }
+  .md blockquote { padding-left: 14px; border-left: 2px solid var(--rule); color: var(--muted); }
+  .md a { color: inherit; text-decoration-color: var(--accent-soft); text-underline-offset: 3px; }
+  .raw { font: 13.5px/1.6 var(--mono); white-space: pre-wrap; }
+
+  /* Your comments, in your own voice: the system face, under the line or block they end on. */
+  .note, .draft { max-width: var(--measure); margin: 6px 0 14px var(--gut); }
+  .note { padding: 10px 14px 12px; border: 1px solid var(--rule); border-left: 2px solid var(--accent-soft); border-radius: 4px 10px 10px 4px; background: var(--surface); cursor: text; }
+  .note header, .draft header { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+  .note p { margin: 4px 0 0; font-size: 15px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .acts { display: flex; gap: 2px; margin-left: auto; opacity: 0; transition: opacity 0.12s; }
+  .note:hover .acts, .note:focus-within .acts { opacity: 1; }
+  .acts button { padding: 2px 7px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+  .acts button:hover { background: var(--band); color: var(--text); }
+  .draft { border: 1px solid var(--accent-soft); border-radius: 10px; background: var(--surface); }
+  .draft header { padding: 10px 14px 0; }
+  .draft textarea { display: block; width: 100%; min-height: 50px; padding: 4px 14px; border: 0; outline: 0; resize: none; background: transparent; color: var(--text); font: 15px/1.55 var(--ui); }
+  .draft textarea::placeholder { color: var(--faint); }
+  .draft footer { display: flex; align-items: center; gap: 6px; padding: 4px 8px 8px 14px; color: var(--muted); font-size: 12.5px; }
+  .draft footer .hint { margin-right: auto; }
+  .btn { padding: 7px 13px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 13.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .btn:hover { filter: brightness(1.06); }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; filter: none; }
+
+  /* The way back: a strip drawn as Claude Code's own prompt, holding what will be pasted there. */
+  .dock { position: fixed; inset: auto 0 0; z-index: 4; padding: 40px 0 18px; background: linear-gradient(to top, var(--bg) 55%, transparent); pointer-events: none; }
+  .dock .wrap > * { margin-left: var(--gut); pointer-events: auto; }
+  .prompt { max-height: 44vh; margin-bottom: 10px; padding: 14px 16px; overflow: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); color: var(--muted); font: 12.5px/1.6 var(--mono); white-space: pre-wrap; }
+  .composer { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); transition: border-color 0.2s; }
+  .composer.is-done { border-color: var(--accent-soft); }
+  .caret { color: var(--accent); font: 14px var(--mono); }
+  .line { flex: 1; min-width: 0; overflow: hidden; color: var(--text); font: 13.5px/1.4 var(--mono); white-space: nowrap; text-overflow: ellipsis; }
+  .line.dim, .composer.is-done .line { color: var(--muted); font: 14px/1.4 var(--ui); white-space: normal; } /* a message wraps, never cut */
+
+  dialog { width: min(540px, calc(100vw - 32px)); padding: 22px 24px; border: 1px solid var(--rule); border-radius: 14px; background: var(--surface); color: var(--text); }
+  dialog::backdrop { background: rgb(0 0 0 / 0.4); }
+  dialog:focus-visible { outline: none; } /* showModal focuses the dialog itself, not a control */
+  dialog h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
+  dialog dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin: 0; font-size: 14px; }
+  dialog dt { color: var(--muted); font: 12.5px/1.6 var(--mono); white-space: nowrap; }
+  dialog dd { margin: 0; }
+  dialog p { margin: 16px 0 0; color: var(--muted); font-size: 13px; }
+  .empty { max-width: 46ch; margin: 18vh auto; padding: 0 16px; color: var(--muted); }
+
+  @media (max-width: 720px) {
+    :root { --gut: 40px; }
+    .id { padding-left: 0; }
+    .meta, .draft footer .hint, .gut::after { display: none; }
+    .text, .md { font-size: 16px; }
+    .row { --lh: 25px; }
+    .gut { padding-right: 14px; }
+    .row::before { left: calc(var(--gut) - 8px); }
+    .dock .wrap > * { margin-left: 0; }
+    .composer { flex-wrap: wrap; }
+    .line { flex-basis: calc(100% - 30px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <div class="id">
+      <h1>Ответ <span id="num"></span></h1>
+      <span class="meta" id="meta"></span>
+    </div>
+    <div class="seg" role="group" aria-label="Вид ответа">
+      <button type="button" id="as-source" aria-pressed="true">Исходник</button>
+      <button type="button" id="as-rendered" aria-pressed="false">Рендер</button>
+    </div>
+    <button type="button" class="ghost" id="help" aria-label="Клавиши">?</button>
+  </div>
+</header>
+
+<main class="sheet wrap" id="sheet"></main>
+
+<footer class="dock">
+  <div class="wrap">
+    <pre class="prompt" id="prompt" hidden></pre>
+    <div class="composer" id="composer">
+      <span class="caret" aria-hidden="true">❯</span>
+      <span class="line" id="line" aria-live="polite"></span>
+      <button type="button" class="ghost" id="show">Показать промпт</button>
+      <button type="button" class="btn" id="copy">Скопировать промпт</button>
+    </div>
+  </div>
+</footer>
+
+<dialog id="keys" aria-labelledby="keys-title">
+  <h2 id="keys-title">Клавиши</h2>
+  <dl>
+    <dt>j / k, ↓ / ↑</dt><dd>строка вниз / вверх; в рендере — блок</dd>
+    <dt>g / G, Home / End</dt><dd>в начало / в конец</dd>
+    <dt>v</dt><dd>начать или снять выделение диапазона</dd>
+    <dt>Enter</dt><dd>комментарий к строке или диапазону</dd>
+    <dt>клик, протяжка</dt><dd>по номерам строк — то же, мышью</dd>
+    <dt>e / d</dt><dd>изменить / удалить комментарий на строке</dd>
+    <dt>n / N</dt><dd>следующий / предыдущий комментарий</dd>
+    <dt>m</dt><dd>исходник или отрисованный markdown</dd>
+    <dt>s</dt><dd>скопировать промпт со всеми комментариями</dd>
+    <dt>Esc</dt><dd>снять выделение, закрыть комментарий</dd>
+  </dl>
+  <p>Клавиши работают и на русской раскладке. Комментарии хранятся в этом браузере и переживают перезагрузку.</p>
+</dialog>
+
+<script type="application/json" id="fb-data">"__FB_DATA__"</script>
+<script id="marked-lib" async src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous"></script>
+<script>
+(() => {
+  const data = JSON.parse(document.getElementById('fb-data').textContent)
+  if (typeof data !== 'object' || data === null) {
+    document.body.innerHTML = '<p class="empty">Эту страницу открывает /fb в Claude Code: откройте ревью и нажмите w.</p>'
+    return
+  }
+  const { lines, blocks, intro, index } = data
+  const $ = id => document.getElementById(id)
+  const sheet = $('sheet')
+
+  const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+  const plural = (n, one, few, many) => {
+    const tens = n % 100, ones = n % 10
+    return `${n} ${tens >= 11 && tens <= 14 ? many : ones === 1 ? one : ones >= 2 && ones <= 4 ? few : many}`
+  }
+  const commentCount = n => plural(n, 'комментарий', 'комментария', 'комментариев')
+
+  // As hooks/review.ts quotes and numbers them: the prompt is the one s builds in the pane.
+  const ref = c => (c.start === c.end ? `L${c.start + 1}` : `L${c.start + 1}-L${c.end + 1}`)
+  const quoted = (start, end, max = 12) => {
+    const picked = lines.slice(start, end + 1)
+    const out = picked.slice(0, max).map((line, i) => `> ${start + i + 1}: ${line || '∅'}`)
+    if (picked.length > max) out.push(`> … ещё ${picked.length - max} строк(и)`)
+    return out.join('\n')
+  }
+  const promptOf = () =>
+    intro + comments.map((c, i) => [`${i + 1}. ${ref(c)}`, quoted(c.start, c.end), 'Комментарий:', c.body].join('\n')).join('\n\n')
+
+  // The browser's own copy of the comments: a reload keeps them. Keyed by the review and its
+  // next id, so a second w after new comments in the pane starts from the pane's.
+  const KEY = `inline-notes:${data.opened}:${data.nextId}`
+  let comments = data.comments.slice()
+  let nextId = data.nextId
+  try {
+    const kept = JSON.parse(localStorage.getItem(KEY) ?? 'null')
+    if (kept && Array.isArray(kept.comments)) ({ comments, nextId } = kept)
+  } catch {}
+  const keep = () => {
+    try { localStorage.setItem(KEY, JSON.stringify({ comments, nextId })) } catch {}
+  }
+
+  const st = { rendered: false, cursor: 0, anchor: null, draft: null, drag: null }
+
+  const blockOf = line => {
+    const i = blocks.findIndex(b => line <= b.end)
+    return i < 0 ? blocks.length - 1 : i
+  }
+  const units = () => (st.rendered ? blocks : lines.map((_, i) => ({ start: i, end: i })))
+  const unitOf = line => (st.rendered ? blockOf(line) : line)
+  /** The lines a comment would take: the selection or the cursor's line; whole blocks when rendered. */
+  const rangeNow = (anchor = st.anchor) => {
+    const from = anchor ?? st.cursor
+    const start = Math.min(from, st.cursor), end = Math.max(from, st.cursor)
+    return st.rendered ? { start: blocks[blockOf(start)].start, end: blocks[blockOf(end)].end } : { start, end }
+  }
+  const touching = (start, end) => comments.filter(c => c.start <= end && start <= c.end)
+
+  // Which source lines sit inside a fence, the fence lines included: drawn as code, never parsed.
+  const fenced = (() => {
+    let open = null
+    return lines.map(line => {
+      const mark = line.match(/^\s{0,3}(`{3,}|~{3,})/)?.[1]
+      if (open !== null) {
+        if (mark && mark[0] === open[0] && mark.length >= open.length) open = null
+        return true
+      }
+      if (mark) open = mark
+      return mark !== undefined
+    })
+  })()
+
+  // A source line with its markup kept but quieted: **bold** reads bold, `code` as code.
+  const inline = s =>
+    s.split(/(`+[^`]*`+)/).map(part => {
+      const code = part.match(/^(`+)([^`]*)\1$/)
+      if (code) return `<code><span class="mk">${code[1]}</span>${esc(code[2])}<span class="mk">${code[1]}</span></code>`
+      return esc(part)
+        .replace(/\*\*(.+?)\*\*/g, '<span class="mk">**</span><strong>$1</strong><span class="mk">**</span>')
+        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<span class="mk">[</span>$1<span class="mk">](</span><span class="url">$2</span><span class="mk">)</span>')
+    }).join('')
+  const sourceLine = i => {
+    const line = lines[i]
+    if (fenced[i] || /^\s*\|/.test(line)) return { kind: 'code', html: esc(line).replace(/^(\s*)(`{3,}|~{3,})(.*)$/, '$1<span class="mk">$2$3</span>') }
+    if (line.trim() === '') return { kind: 'blank', html: '' }
+    let m
+    if ((m = line.match(/^(\s{0,3}#{1,6}\s+)(.*)$/))) return { kind: 'h', html: `<span class="mk">${esc(m[1])}</span>${inline(m[2])}` }
+    if ((m = line.match(/^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/))) return { kind: 'li', html: `<span class="mk">${esc(m[1])}</span>${inline(m[2])}` }
+    if ((m = line.match(/^(\s*>\s?)(.*)$/))) return { kind: 'q', html: `<span class="mk">${esc(m[1])}</span>${inline(m[2])}` }
+    return { kind: '', html: inline(line) }
+  }
+
+  // Raw HTML in a reply is shown as text and never run; links go out only over http(s) and mail.
+  // Checked by its parse: before it loads, window.marked can name the DOM element of that id.
+  const hasMarked = () => typeof window.marked?.parse === 'function'
+  let markedReady = false
+  const md = src => {
+    if (!hasMarked()) return null
+    if (!markedReady) {
+      marked.use({
+        gfm: true,
+        renderer: {
+          html: text => esc(text),
+          link: (href, title, text) =>
+            /^(https?:|mailto:)/i.test(href ?? '') ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${text}</a>` : text,
+          image: (href, title, text) => esc(text || href || ''),
+        },
+      })
+      markedReady = true
+    }
+    return marked.parse(src)
+  }
+
+  const noteHtml = c => `
+    <article class="note" data-id="${c.id}">
+      <header><span>#${c.id} · ${ref(c)}</span><span class="acts"><button type="button" data-act="edit">Изменить</button><button type="button" data-act="del">Удалить</button></span></header>
+      <p>${esc(c.body)}</p>
+    </article>`
+  const draftHtml = d => `
+    <section class="draft">
+      <header>${d.id === undefined ? 'Новый комментарий' : `Правка #${d.id}`} · ${ref(d)}</header>
+      <textarea rows="2" aria-label="Комментарий к ${ref(d)}" placeholder="Что здесь поправить или уточнить?"></textarea>
+      <footer>
+        <span class="hint">Enter — сохранить, Shift+Enter — новая строка, Esc — отмена</span>
+        <button type="button" class="ghost" data-act="cancel">Отмена</button>
+        <button type="button" class="btn" data-act="save">Сохранить</button>
+      </footer>
+    </section>`
+
+  function render() {
+    const out = []
+    const shown = units()
+    const kinds = st.rendered ? [] : shown.map((_, i) => sourceLine(i))
+    shown.forEach((u, i) => {
+      const n = touching(u.start, u.end).length
+      let cls = 'row', body
+      if (st.rendered) {
+        cls += ' block'
+        const src = lines.slice(u.start, u.end + 1).join('\n')
+        body = `<div class="text md">${md(src) ?? `<div class="raw">${esc(src)}</div>`}</div>`
+      } else {
+        const k = kinds[i]
+        if (k.kind) cls += ` ${k.kind}`
+        if (k.kind === 'code' && kinds[i - 1]?.kind !== 'code') cls += ' first'
+        if (k.kind === 'code' && kinds[i + 1]?.kind !== 'code') cls += ' last'
+        body = `<div class="text">${k.html}</div>`
+      }
+      out.push(`
+        <div class="${cls}" data-start="${u.start}" data-end="${u.end}">
+          <div class="gut" title="Комментарий к ${ref(u)}">${n === 0 ? '' : `<span class="c" title="${commentCount(n)}"></span>`}<span class="n">${st.rendered ? `L${u.start + 1}` : i + 1}</span></div>
+          ${body}
+        </div>`)
+      for (const c of comments) if (c.id !== st.draft?.id && unitOf(c.end) === i) out.push(noteHtml(c))
+      if (st.draft && unitOf(st.draft.end) === i) out.push(draftHtml(st.draft))
+    })
+    sheet.innerHTML = out.join('')
+    paint()
+    dock()
+    const ta = sheet.querySelector('textarea')
+    if (ta) {
+      ta.value = st.draft.text
+      fit(ta)
+      ta.focus()
+      ta.setSelectionRange(ta.value.length, ta.value.length)
+      ta.closest('.draft').scrollIntoView({ block: 'nearest' })
+    }
+  }
+
+  // Cursor and selection only: no row is rebuilt, so a drag across the gutter stays smooth.
+  function paint() {
+    const sel = st.anchor === null ? null : rangeNow()
+    const at = units()[unitOf(st.cursor)]
+    for (const row of sheet.querySelectorAll('.row')) {
+      const start = +row.dataset.start, end = +row.dataset.end
+      row.classList.toggle('is-cursor', start === at.start)
+      row.classList.toggle('is-sel', sel !== null && sel.start <= start && end <= sel.end)
+    }
+    $('as-source').setAttribute('aria-pressed', String(!st.rendered))
+    $('as-rendered').setAttribute('aria-pressed', String(st.rendered))
+    $('meta').textContent = `${st.rendered ? plural(blocks.length, 'блок', 'блока', 'блоков') : plural(lines.length, 'строка', 'строки', 'строк')} · ${commentCount(comments.length)}`
+  }
+  const showCursor = () => sheet.querySelector('.row.is-cursor')?.scrollIntoView({ block: 'nearest' })
+
+  let said = 0
+  function dock(message, done = false) {
+    const line = $('line')
+    clearTimeout(said)
+    $('composer').classList.toggle('is-done', done)
+    $('copy').disabled = comments.length === 0
+    $('prompt').textContent = promptOf()
+    if (message !== undefined) {
+      line.textContent = message
+      line.className = 'line dim'
+      said = setTimeout(() => dock(), 7000)
+    } else if (comments.length) {
+      line.textContent = `${commentCount(comments.length)} к ответу #${index}`
+      line.className = 'line'
+    } else {
+      line.textContent = 'Нажмите на номер строки или протяните по номерам, чтобы оставить комментарий.'
+      line.className = 'line dim'
+    }
+  }
+
+  const fit = ta => {
+    ta.style.height = 'auto'
+    ta.style.height = `${ta.scrollHeight}px`
+  }
+
+  function setCursor(line) {
+    st.cursor = Math.max(0, Math.min(lines.length - 1, line))
+    if (st.rendered) st.cursor = blocks[blockOf(st.cursor)].start // rendered, the cursor sits on a block's first line
+    paint()
+    showCursor()
+  }
+  const move = by => (st.rendered ? setCursor(blocks[Math.max(0, Math.min(blocks.length - 1, blockOf(st.cursor) + by))].start) : setCursor(st.cursor + by))
+
+  function startDraft(range) {
+    if (st.draft) return
+    st.draft = { ...range, text: '' }
+    st.anchor = null
+    render()
+  }
+  function startEdit(c) {
+    st.draft = { id: c.id, start: c.start, end: c.end, text: c.body }
+    st.anchor = null
+    render()
+  }
+  function saveDraft() {
+    const d = st.draft
+    const body = d.text.trim()
+    st.draft = null
+    if (body !== '' && d.id !== undefined) comments = comments.map(c => (c.id === d.id ? { ...c, body } : c))
+    if (body !== '' && d.id === undefined) {
+      comments = [...comments, { id: nextId++, start: d.start, end: d.end, body }].sort((a, b) => a.start - b.start || a.end - b.end || a.id - b.id)
+    }
+    keep()
+    render()
+  }
+  function cancelDraft() {
+    st.draft = null
+    render()
+  }
+  function remove(id) {
+    comments = comments.filter(c => c.id !== id)
+    keep()
+    render()
+  }
+  const atCursor = () => {
+    const { start, end } = rangeNow(null)
+    return touching(start, end)[0]
+  }
+  function jumpNote(dir) {
+    if (comments.length === 0) return dock('Комментариев пока нет.')
+    const after = rangeNow(null).end
+    const target = dir > 0
+      ? comments.find(c => c.start > after) ?? comments[0]
+      : [...comments].reverse().find(c => c.start < st.cursor) ?? comments.at(-1)
+    setCursor(target.start)
+  }
+  function view(rendered) {
+    if (rendered && !hasMarked()) return dock('Рендер недоступен: библиотека marked не загрузилась. Нужна сеть.')
+    st.rendered = rendered
+    st.anchor = null
+    render()
+    setCursor(st.cursor)
+  }
+
+  async function copyPrompt() {
+    if (comments.length === 0) return dock('Нечего копировать: комментариев нет.')
+    const text = promptOf()
+    let copied = false
+    try {
+      await navigator.clipboard.writeText(text)
+      copied = true
+    } catch {
+      const area = Object.assign(document.createElement('textarea'), { value: text })
+      area.style.cssText = 'position:fixed;opacity:0'
+      document.body.append(area)
+      area.select()
+      try { copied = document.execCommand('copy') } catch {}
+      area.remove()
+    }
+    if (copied) return dock('Скопировано. Вставьте в поле ввода Claude Code (⌘V) и нажмите Enter.', true)
+    togglePrompt(true)
+    getSelection().selectAllChildren($('prompt'))
+    dock('Браузер не дал скопировать: промпт выделен, нажмите ⌘C.')
+  }
+  function togglePrompt(show = $('prompt').hidden) {
+    $('prompt').hidden = !show
+    $('show').textContent = show ? 'Скрыть промпт' : 'Показать промпт'
+  }
+
+  sheet.addEventListener('pointerdown', e => {
+    const row = e.target.closest('.row')
+    if (e.button !== 0 || !row || !e.target.closest('.gut') || st.draft) return
+    e.preventDefault()
+    st.drag = true
+    st.anchor = st.cursor = +row.dataset.start
+    document.body.classList.add('dragging')
+    paint()
+  })
+  sheet.addEventListener('pointerover', e => {
+    const row = e.target.closest('.row')
+    if (!st.drag || !row) return
+    st.cursor = +row.dataset.start
+    paint()
+  })
+  document.addEventListener('pointerup', () => {
+    if (!st.drag) return
+    st.drag = null
+    document.body.classList.remove('dragging')
+    startDraft(rangeNow())
+  })
+  sheet.addEventListener('click', e => {
+    const act = e.target.closest('[data-act]')?.dataset.act
+    const note = comments.find(c => c.id === +e.target.closest('.note')?.dataset.id)
+    if (act === 'save') return saveDraft()
+    if (act === 'cancel') return cancelDraft()
+    if (act === 'del' && note) return remove(note.id)
+    if (note && !st.draft) return startEdit(note) // a click on a comment edits it, as in the pane
+    const row = e.target.closest('.row')
+    if (row && !e.target.closest('.gut') && !st.draft && getSelection().isCollapsed) {
+      st.anchor = null
+      setCursor(+row.dataset.start)
+    }
+  })
+  sheet.addEventListener('input', e => {
+    if (e.target.tagName !== 'TEXTAREA' || !st.draft) return
+    st.draft.text = e.target.value
+    fit(e.target)
+  })
+
+  // Keys by their place on the keyboard (e.code), so the Russian layout drives the same commands.
+  document.addEventListener('keydown', e => {
+    if ($('keys').open) return
+    if (e.target.tagName === 'TEXTAREA') {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault()
+        saveDraft()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        cancelDraft()
+      }
+      return
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    if (e.target.closest('button, a') && (e.key === 'Enter' || e.key === ' ')) return
+    const keys = {
+      KeyJ: () => move(1), ArrowDown: () => move(1), KeyK: () => move(-1), ArrowUp: () => move(-1),
+      KeyG: () => setCursor(e.shiftKey ? lines.length : 0), Home: () => setCursor(0), End: () => setCursor(lines.length),
+      KeyV: () => { st.anchor = st.anchor === null ? st.cursor : null; paint() },
+      Enter: () => startDraft(rangeNow()), NumpadEnter: () => startDraft(rangeNow()), KeyC: () => startDraft(rangeNow()),
+      KeyE: () => { const c = atCursor(); c ? startEdit(c) : dock('На этой строке нет комментария.') },
+      KeyD: () => { const c = atCursor(); c ? remove(c.id) : dock('На этой строке нет комментария.') },
+      KeyN: () => jumpNote(e.shiftKey ? -1 : 1),
+      KeyM: () => view(!st.rendered),
+      KeyS: () => copyPrompt(),
+      Escape: () => { st.anchor = null; paint() },
+    }
+    const run = keys[e.code] ?? (e.key === '?' || (e.code === 'Slash' && e.shiftKey) ? () => $('keys').showModal() : null)
+    if (!run) return
+    e.preventDefault()
+    run()
+  })
+
+  $('as-source').addEventListener('click', () => view(false))
+  $('as-rendered').addEventListener('click', () => view(true))
+  $('help').addEventListener('click', () => $('keys').showModal())
+  $('keys').addEventListener('click', e => e.target === $('keys') && $('keys').close())
+  $('show').addEventListener('click', () => togglePrompt())
+  $('copy').addEventListener('click', copyPrompt)
+
+  $('num').textContent = `#${index}`
+  document.title = `Ответ #${index} · inline-notes`
+  document.documentElement.dataset.theme = data.theme === 'light' ? 'light' : 'dark'
+
+  const wantRendered = data.preview === true
+  if (wantRendered && hasMarked()) st.rendered = true
+  render()
+  // marked arrives after the first draw: a review opened rendered redraws once it has it.
+  if (!hasMarked()) $('marked-lib').addEventListener('load', () => wantRendered && view(true))
+})()
+</script>
+</body>
+</html>
