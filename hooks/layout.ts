@@ -40,6 +40,16 @@ export const hintsOf = (r: FbReview) => (r.draft ? DRAFT_HINTS : r.preview ? PRE
 /** The hint row as plain text: what rowsOf counts. */
 export const hintOf = (r: FbReview) => hintsOf(r).map(([key, what]) => `${key} ${what}`).join(HINT_GAP)
 
+/** Columns inside the reviewer's padding: header and body are padded a cell on each side. */
+export const innerOf = (columns: number) => Math.max(10, columns - 2)
+
+/** Rows the header takes above the body: title, hint, status. */
+export function headerRows(r: FbReview, lines: string[], inner: number) {
+  const { head, tail } = titleOf(r, lines)
+
+  return rowsOf(head + tail, inner) + rowsOf(hintOf(r), inner) + (r.status ? rowsOf(r.status, inner) : 0)
+}
+
 // Greedy word wrap, as the terminal breaks a Text: a word that would cross the edge
 // starts the next row, one longer than a row is cut across rows. Over, never under:
 // a spare row at the bottom beats a cursor clipped off it.
@@ -231,4 +241,90 @@ export function fitTop(heights: number[], cursor: number, top: number, viewport:
   }
 
   return first
+}
+
+/** The window the reviewer draws for `r` in a region `columns` by `rows`: what it scrolls over, from where. */
+export function windowOf(r: FbReview, columns: number, rows: number) {
+  const inner = innerOf(columns)
+  const header = headerRows(r, linesOf(r.text), inner)
+  const viewport = Math.max(3, rows - header)
+  const units = unitsOf(r, inner)
+
+  return { inner, header, viewport, units, top: fitTop(units.heights, units.at, r.top ?? 0, viewport) }
+}
+
+/** Where the caret stands after `text`, word-wrapped to `width` as the terminal wraps a Text. */
+export function caretIn(text: string, width: number): { row: number; col: number } {
+  const w = Math.max(1, width)
+  let row = 0
+  let col = 0
+  text.split('\n').forEach((line, i) => {
+    if (i > 0) {
+      row++
+      col = 0
+    }
+    line.split(' ').forEach((word, j) => {
+      if (j > 0) {
+        if (col + 1 > w) {
+          row++
+          col = 0
+        } else col++
+      }
+      let len = [...word].length
+      if (col > 0 && col + len > w) {
+        row++
+        col = 0
+      }
+      while (len > w) {
+        row++
+        len -= w
+      }
+      col += len
+    })
+  })
+  // The caret's own cell past the edge starts the next row.
+  return col >= w ? { row: row + 1, col: 0 } : { row, col }
+}
+
+/**
+ * Where the terminal's caret goes in the reviewer's region: on the cursor's `▌`, or at the
+ * insertion point of the comment being typed. It counts rows as the reviewer draws them;
+ * in the rendered view the blocks' heights are guessed, as blockHeights says.
+ */
+export function caretOf(r: FbReview, columns: number, rows: number): { x: number; y: number } {
+  const at = (x: number, y: number) => ({ x: Math.max(0, Math.min(columns - 1, x)), y: Math.max(0, Math.min(rows - 1, y)) })
+  if (r.help) return at(1, 0)
+  const { inner, header, units, top } = windowOf(r, columns, rows)
+  const lines = linesOf(r.text)
+  const draft = r.draft
+  const typed = (left: number, boxWidth: number, y: number) => {
+    const caret = caretIn([...r.draftText].slice(0, r.draftCaret).join(''), boxWidth - 4)
+    // A border row and the title above the text; the border and a cell of padding beside it.
+    return at(1 + left + 2 + caret.col, y + 2 + caret.row)
+  }
+  const commentRows = (match: (end: number) => boolean, width: number) =>
+    r.comments
+      .filter(c => c.id !== draft?.id && match(c.end))
+      .reduce((sum, c) => sum + rowsOf(`↳ #${c.id} ${lineRef(c)}: ${c.body}`, width), 0)
+
+  if (!r.preview) {
+    const { width, content, heights } = measure(r, inner)
+    const above = (end: number) => heights.slice(top, Math.max(top, end)).reduce((a, b) => a + b, 0)
+    if (!draft) return at(1, header + above(r.cursor))
+    const y = header + above(draft.end) + rowsOf(lines[draft.end] || ' ', content) + commentRows(end => end === draft.end, content)
+    return typed(width + GUTTER, content, y)
+  }
+
+  const blocks = blocksOf(r.text)
+  const wide = Math.max(10, inner - BLOCK_GUTTER)
+  const blank = (i: number) => (i > 0 && blocks[i]!.start > blocks[i - 1]!.end + 1 ? 1 : 0)
+  // The block's first row: the window's top block draws without the blank line its height counts.
+  const startOf = (k: number) =>
+    k <= top ? 0 : units.heights.slice(top, k).reduce((a, b) => a + b, 0) - blank(top) + blank(k)
+  if (!draft) return at(1, header + startOf(units.at))
+  const k = blockIndex(blocks, draft.end)
+  const source = lines.slice(blocks[k]!.start, blocks[k]!.end + 1)
+  const drawn = isTable(source) ? tableRows(source, wide).length : rowsOf(source.join('\n'), wide)
+  const y = header + startOf(k) + drawn + commentRows(end => blockIndex(blocks, end) === k, wide)
+  return typed(BLOCK_GUTTER, wide, y)
 }

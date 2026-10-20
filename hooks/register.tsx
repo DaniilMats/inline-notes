@@ -4,11 +4,12 @@
 // takes the keyboard only from a click, so a one-line field under it, drawn zero rows tall,
 // takes the keys whenever the pane does (/fb, a click) and feeds them to the same handleKey.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { FbReview } from '../types'
 import { GENERATIONS, fieldKeys, fieldStart, markOf } from './field'
 import type { Field } from './field'
+import { caretOf, windowOf } from './layout'
 import { buildPrompt, commentCount, handleKey, scrollBy, startReview, walkBlocks } from './review'
 
 const PANE = 'fb'
@@ -42,6 +43,9 @@ let handling: Promise<void> = Promise.resolve()
 // The terminal's size as last seen, which f asks the pane to take.
 // ponytail: module state; after a reload f waits for the next draw or /fb to know it
 let screen = { columns: 0, rows: 0 }
+// The reviewer's region as last drawn: what its window is fitted in.
+// ponytail: module state; after a reload the first change waits for a draw to refit
+let region = { columns: 0, rows: 0 }
 
 type Message = { type: 'sync'; review: FbReview } | { type: 'finish'; outcome: 'submit' | 'cancel'; review: FbReview }
 
@@ -58,8 +62,13 @@ async function replies($: EngineInterface): Promise<string[]> {
   return messages.filter(m => m.role === 'assistant' && m.text.trim() !== '').map(m => m.text)
 }
 
-// A change the hooks make themselves reaches the reviewer by outranking its rev.
-const bump = (r: FbReview, patch: Partial<FbReview>): FbReview => ({ ...r, ...patch, rev: (r.rev ?? 0) + 1 })
+// A change the hooks make themselves reaches the reviewer by outranking its rev, its
+// window refitted as the reviewer refits its own changes.
+function bump(r: FbReview, patch: Partial<FbReview>): FbReview {
+  const next = { ...r, ...patch, rev: (r.rev ?? 0) + 1 }
+
+  return region.columns > 0 ? { ...next, top: windowOf(next, region.columns, region.rows).top } : next
+}
 
 // Wide, the pane asks for the whole screen (columns docked, rows inline); an open
 // without them goes back to the engine's share. A size the person dragged wins either way.
@@ -256,22 +265,23 @@ export const register: Register = on => {
       />
     )
 
-    // The field takes no row: the reviewer has the whole body. A height-only resize
+    // The field takes no room and draws nothing, but the terminal's caret stands where it is:
+    // so it sits on the cursor's marker, or at the insertion point of the comment being typed.
+    // The arrow Buttons around it, in document order, sit out of sight. A height-only resize
     // catches up on the next keypress, which re-renders this pane with the new bodyRows.
+    region = { columns: e.props.bodyColumns, rows: Math.max(8, e.props.scroll.bodyRows) }
+    const caret = caretOf(r, region.columns, region.rows)
+    const hidden = (at: { x: number; y: number }, child: RenderElement) => (
+      <Box position="absolute" top={at.y} left={at.x} width={1} height={0} overflow="hidden">
+        {child}
+      </Box>
+    )
     return (
       <Box flexDirection="column">
-        <Client
-          key="review"
-          module="./reviewer.tsx"
-          props={{ review: r, ...(await paletteOf($)) }}
-          width="100%"
-          height={Math.max(8, e.props.scroll.bodyRows)}
-        />
-        <Box height={0} overflow="hidden" flexDirection="row">
-          <Button key={ARROW_UP} plain label="↑" onPress={() => pressKeys($, ['up'])} />
-          {field}
-          <Button key={ARROW_DOWN} plain label="↓" onPress={() => pressKeys($, ['down'])} />
-        </Box>
+        <Client key="review" module="./reviewer.tsx" props={{ review: r, ...(await paletteOf($)) }} width="100%" height={region.rows} />
+        {hidden({ x: 0, y: -1 }, <Button key={ARROW_UP} plain label="↑" onPress={() => pressKeys($, ['up'])} />)}
+        {hidden(caret, field)}
+        {hidden({ x: 0, y: -1 }, <Button key={ARROW_DOWN} plain label="↓" onPress={() => pressKeys($, ['down'])} />)}
       </Box>
     )
   })

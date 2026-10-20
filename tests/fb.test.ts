@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { fieldKeys, fieldStart, markOf } from '../hooks/field'
-import { fitTop, measure, rowsOf, tableRows } from '../hooks/layout'
+import { caretIn, caretOf, fitTop, measure, rowsOf, tableRows } from '../hooks/layout'
 import {
   arm,
   blocksOf,
@@ -417,4 +417,17 @@ test('a rendered table fits the pane: columns share the width and wrap their wor
   expect(narrow.map(r => r.text).join('\n')).toContain('Объём')
   expect(narrow.length).toBeGreaterThan(7) // the comment wraps
   expect(narrow.at(-1)?.text.startsWith('└')).toBe(true)
+})
+
+test('the terminal caret stands on the cursor marker, and after the text of the comment being typed', () => {
+  const r = startReview(1, REPLY, false)
+  const first = caretOf(r, 160, 30) // wide enough that both hint rows take one row
+  expect(first.x).toBe(1) // the `▌` cell, inside the padding
+  expect(caretOf(setCursor(r, 1), 160, 30)).toEqual({ x: 1, y: first.y + 1 })
+  let typing = step(setCursor(r, 1), 'return')
+  for (const key of ['о', 'к']) typing = step(typing, key)
+  // Under line 2: the box's border and title, then the text; padding, gutter, border and padding to its left.
+  expect(caretOf(typing, 160, 30)).toEqual({ x: 1 + 1 + 7 + 2 + 2, y: first.y + 2 + 2 })
+  expect(caretIn('ab cd', 4)).toEqual({ row: 1, col: 2 }) // `cd` wraps to the next row
+  expect(caretIn('abcd', 4)).toEqual({ row: 1, col: 0 }) // the caret's own cell past the edge
 })

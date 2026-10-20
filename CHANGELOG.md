@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 — 2026-10-20
+
+- The terminal's caret no longer sits in the pane's corner and no longer jumps there while you type: it stands on the cursor's `▌` marker, and inside the comment box at the insertion point.
+
 ## 0.5.0 — 2026-10-20
 
 - The pane fits Claude Code: the header sits on the pane's own frame color as a title bar, the body fills the rest, and the cursor's line is a highlighted band with an accent marker. Colors follow the Claude Code theme (dark or light).

@@ -1,6 +1,6 @@
 {
   "name": "inline-notes",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "/fb: comment on any line of a Claude reply in a review pane, like a pull request, and send every comment back in one prompt",
   "author": { "name": "Daniil Matsyutsya", "url": "https://github.com/DaniilMats" },
   "homepage": "https://github.com/DaniilMats/inline-notes",

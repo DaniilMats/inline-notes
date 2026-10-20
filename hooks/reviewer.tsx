@@ -7,12 +7,12 @@
 import type { ClientSurface, RenderElement } from 'claude-code'
 
 import type { FbReview } from '../types'
-import { BLOCK_GUTTER, GUTTER, HINT_GAP, draftRows, fitTop, hintOf, hintsOf, isTable, measure, rowsOf, tableRows, titleOf, unitsOf } from './layout'
+import { BLOCK_GUTTER, GUTTER, HINT_GAP, draftRows, headerRows, hintsOf, isTable, measure, rowsOf, tableRows, titleOf, windowOf } from './layout'
 import { blockIndex, blocksOf, commentsAt, currentRange, handleKey, isSelected, lineRef, setCursor, startAdd, startEdit } from './review'
 
 /** `background` paints the body, `highlight` the cursor's line; the header stays on the pane's own frame color. */
 type Props = { review: FbReview; background: string; highlight: string }
-type State = { review: FbReview; top: number }
+type State = { review: FbReview }
 
 // Theme keys, so the accents follow the person's theme as Claude Code's own do.
 const ACCENT = 'claude'
@@ -46,16 +46,6 @@ const normalize = (r: FbReview): FbReview => ({
   draftCaret: r.draftCaret ?? [...(r.draftText ?? '')].length,
 })
 
-// Header and body are padded a cell on each side.
-const innerOf = (columns: number) => Math.max(10, columns - 2)
-
-// Rows the header takes above the body: title, hint, status.
-function headerRows(r: FbReview, lines: string[], inner: number) {
-  const { head, tail } = titleOf(r, lines)
-
-  return rowsOf(head + tail, inner) + rowsOf(hintOf(r), inner) + (r.status ? rowsOf(r.status, inner) : 0)
-}
-
 type Hit = { line: number; edit?: number }
 
 export default function Reviewer(props: Props, surface: ClientSurface<State>): RenderElement {
@@ -65,28 +55,24 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
   const sameReview = held !== undefined && held.review.opened === incoming.opened
   // Adopt the props for a new review, and for one the hooks advanced past ours.
   const adopt = !sameReview || incoming.rev! > held.review.rev!
-  const state: State = adopt ? { review: incoming, top: sameReview ? held.top : 0 } : held
+  const state: State = adopt ? { review: incoming } : held
   if (adopt) surface.setState(state)
 
   const r = state.review
   const columns = surface.columns || 80
   const rows = surface.rows || 24
-  const inner = innerOf(columns)
+  // `top` counts what the window scrolls over: lines, or blocks when rendered. The hooks
+  // fit the same window from the same review, to put the terminal's caret on it.
+  const { inner, viewport, units, top } = windowOf(r, columns, rows)
   const { lines, width, content, heights } = measure(r, inner)
-  const viewport = Math.max(3, rows - headerRows(r, lines, inner))
-  // `top` counts what the window scrolls over: lines, or blocks when rendered.
-  const units = unitsOf(r, inner)
-  const top = r.help ? state.top : fitTop(units.heights, units.at, state.top, viewport)
 
   // Every change made here: a higher rev, a refit of the window, a copy to the hooks.
   const apply = (next: FbReview | 'submit' | 'cancel', from: State) => {
     if (typeof next === 'string') return surface.post({ type: 'finish', outcome: next, review: from.review })
     if (next === from.review) return
-    const review = { ...next, rev: (from.review.rev ?? 0) + 1 }
-    const cols = innerOf(surface.columns || columns)
-    const view = Math.max(3, (surface.rows || rows) - headerRows(review, lines, cols))
-    const fit = unitsOf(review, cols)
-    surface.setState({ ...from, review, top: fitTop(fit.heights, fit.at, from.top, view) })
+    const moved = { ...next, rev: (from.review.rev ?? 0) + 1 }
+    const review = { ...moved, top: windowOf(moved, surface.columns || columns, surface.rows || rows).top }
+    surface.setState({ ...from, review })
     surface.post({ type: 'sync', review })
   }
   const current = () => surface.state ?? state

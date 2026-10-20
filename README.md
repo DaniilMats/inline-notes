@@ -90,7 +90,7 @@ While you type a comment, `Enter` saves it and `Enter` on an empty comment cance
 
 ## How it works
 
-`inline-notes` is a Claude Code plugin built on function hooks. `/fb` reads the session's replies, opens a pane, and draws the reviewer in it as a `Client` surface module. That module reads keys raw, which is how the Russian layout maps onto the same commands. A zero-height input field holds the keyboard, so no click is needed. When you press `s`, the comments become one prompt that quotes the numbered lines each comment is about.
+`inline-notes` is a Claude Code plugin built on function hooks. `/fb` reads the session's replies, opens a pane, and draws the reviewer in it as a `Client` surface module. That module reads keys raw, which is how the Russian layout maps onto the same commands. A zero-height input field holds the keyboard, so no click is needed. It sits on the cursor's `▌` marker, or at the insertion point of a comment being typed, so the terminal's caret never wanders off to a corner. When you press `s`, the comments become one prompt that quotes the numbered lines each comment is about.
 
 The review state lives in the session's plugin state, so closing the pane with `Esc` loses nothing.
 

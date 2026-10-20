@@ -29,6 +29,8 @@ export type FbReview = {
   rev?: number
   /** The key table is shown instead of the reply. */
   help?: boolean
+  /** The first line or block the window was last fitted from: the reviewer and the hooks fit it alike. */
+  top?: number
 }
 
 declare module 'claude-code' {
