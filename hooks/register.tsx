@@ -1,21 +1,31 @@
 // /fb: line comments on a Claude reply, batched back into the prompt.
 // A port of the pi reviewer: the pane holds a
 // Client (./reviewer.tsx) that reads keys raw, so the Russian layout works too. A Client
-// takes the keyboard only from a click, so a one-line field above it takes the keys
-// whenever the pane does (/fb, ctrl+x Tab) and feeds them to the same handleKey.
+// takes the keyboard only from a click, so a one-line field under it, drawn zero rows tall,
+// takes the keys whenever the pane does (/fb, a click) and feeds them to the same handleKey.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { FbReview } from '../types'
 import { GENERATIONS, fieldKeys, fieldStart, markOf } from './field'
 import type { Field } from './field'
-import { buildPrompt, handleKey, lineRef, scrollBy, startReview, walkBlocks } from './review'
+import { buildPrompt, commentCount, handleKey, scrollBy, startReview, walkBlocks } from './review'
 
 const PANE = 'fb'
-// The engine fills a pane with the user-message gray (#666666), which washes out
-// everything drawn on it; the terminal's own background reads as in the transcript.
-// ponytail: fixed to this terminal theme (#292c33); make it a userConfig option if the theme changes
-const BACKGROUND = '#292c33'
+const ARROW_UP = 'arrow-up'
+const ARROW_DOWN = 'arrow-down'
+// The engine frames a pane in the user-message gray and fills it with it, which washes out
+// text drawn on it: the header stays on it as the pane's title bar, the body takes its own
+// color, the cursor's line a lighter band. A theme without `light` in its name reads as dark.
+const PALETTES = {
+  dark: { background: '#1f2228', highlight: '#30353f' },
+  light: { background: '#fbfbfc', highlight: '#e6e9f0' },
+}
+async function paletteOf($: EngineInterface) {
+  const theme = (await $.config.list().catch(() => [])).find(row => row.key === 'theme')?.value
+
+  return typeof theme === 'string' && theme.includes('light') ? PALETTES.light : PALETTES.dark
+}
 const review = atom({ plugin: 'inline-notes', key: 'review' } as const, null as FbReview | null)
 
 // The key field holds an invisible mark (./field.ts) and nothing else: each handled change
@@ -100,24 +110,29 @@ async function finish($: EngineInterface, outcome: 'submit' | 'cancel', r: FbRev
   $.ui.toast(
     r.send
       ? `Отправлено комментариев: ${r.comments.length}.`
-      : `${r.comments.length} комментари(й/ев) в поле ввода${appended ? ' после вашего текста' : ''}: проверьте, при желании вставьте скриншот, и Enter.`,
+      : `${commentCount(r.comments.length)} в поле ввода${appended ? ' после вашего текста' : ''}: проверьте, при желании вставьте скриншот, и Enter.`,
   )
 }
 
+const keyOf = (ch: string) => (ch === ' ' ? 'space' : ch === '\r' ? 'return' : ch === '\b' ? 'backspace' : ch)
+
 // Characters typed into the key field, run through the reviewer's own key handling.
-function typeKeys($: EngineInterface, typed: string) {
-  const run = () => runKeys($, typed)
+const typeKeys = ($: EngineInterface, typed: string) => pressKeys($, [...typed].map(keyOf))
+
+// Keys by name (`j`, `down`), one change after another.
+function pressKeys($: EngineInterface, keys: string[]) {
+  const run = () => runKeys($, keys)
   handling = handling.then(run, run)
 
   return handling
 }
 
-async function runKeys($: EngineInterface, typed: string) {
+async function runKeys($: EngineInterface, keys: string[]) {
   const prev = await read($, review)
   if (!prev) return
   let r = prev
-  for (const ch of typed) {
-    const out = handleKey(r, { key: ch === ' ' ? 'space' : ch === '\r' ? 'return' : ch === '\b' ? 'backspace' : ch }, 10)
+  for (const key of keys) {
+    const out = handleKey(r, { key }, 10)
     if (typeof out === 'string') return finish($, out, r)
     r = out
   }
@@ -157,11 +172,11 @@ export const register: Register = on => {
     const open = await read($, review)
     if (open && ref === undefined && !send) {
       await openPane($, open)
-      return { text: `Ревью ответа #${open.index} снова открыто: клавиши идут в поле над текстом (j/k, c, s, ? — справка).` }
+      return { text: `Ревью ответа #${open.index} снова открыто: j/k — строки, Enter — комментарий, s — в промпт, ? — все клавиши.` }
     }
     if (open && open.comments.length > 0) {
       return {
-        text: `Ревью ответа #${open.index} открыто, в нём ${open.comments.length} комментари(й/ев): сначала s (в промпт) или q (закрыть); /fb без аргументов возвращает к нему.`,
+        text: `Ревью ответа #${open.index} открыто, в нём ${commentCount(open.comments.length)}: сначала s (в промпт) или q (закрыть); /fb без аргументов возвращает к нему.`,
       }
     }
 
@@ -177,7 +192,7 @@ export const register: Register = on => {
     await update($, review, () => started)
     await openPane($, started)
 
-    return { text: `Ревью ответа #${index} открыто: клавиши идут в поле над текстом (j/k, c, s, ? — справка).` }
+    return { text: `Ревью ответа #${index} открыто: j/k — строки, Enter — комментарий, s — в промпт, ? — все клавиши.` }
   })
 
   on('ui.message', { requestId: PANE }, async ($, e, next) => {
@@ -205,25 +220,32 @@ export const register: Register = on => {
     return {}
   })
 
+  // The field is one line, so ↑ and ↓ there move the ring to the element before or after it:
+  // a hidden Button on each side, whose move is the arrow and keeps the ring on the field.
+  on('ui.focus', { requestId: PANE }, async ($, e, next) => {
+    if (e.element !== ARROW_UP && e.element !== ARROW_DOWN) return next(e)
+    await pressKeys($, [e.element === ARROW_UP ? 'up' : 'down'])
+
+    return { deny: 'the arrow moves the review cursor' }
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     if (e.surface !== 'terminal' && e.surface !== 'desktop') {
       const { Text } = $.ui.resolve(e)
       return <Text dimColor>Ревью /fb работает в терминале и desktop.</Text>
     }
-    const { Box, Client, Input, Text } = $.ui.resolve(e)
+    const { Box, Button, Client, Input, Text } = $.ui.resolve(e)
     if (e.viewport) screen = { columns: Math.max(screen.columns, e.viewport.columns), rows: e.viewport.rows }
     const r = await read($, review)
     if (!r) return <Text dimColor>Нет открытого ревью: /fb</Text>
     drawnGen = genOf(await read($, mark))
 
     // Typing a comment goes through the same field: each character lands in the box under its
-    // line or block, so nothing is typed into a second field above it.
+    // line or block, so nothing is typed into a second field.
     const field = (
       <Input
         key="keys"
         autoFocus
-        label={r.draft ? `${r.draft.id === undefined ? 'комментарий' : `правка #${r.draft.id}`} к ${lineRef(r.draft)} →` : 'клавиши'}
-        submitLabel={r.draft ? 'сохранить' : 'комментарий'}
         value={markOf(drawnGen)}
         onInput={async (value: string) => {
           const got = fieldKeys(typing, drawnGen, value)
@@ -234,18 +256,22 @@ export const register: Register = on => {
       />
     )
 
-    // The region is the body less the field: a height-only resize catches up on
-    // the next keypress, which re-renders this pane with the new bodyRows.
+    // The field takes no row: the reviewer has the whole body. A height-only resize
+    // catches up on the next keypress, which re-renders this pane with the new bodyRows.
     return (
       <Box flexDirection="column">
-        {field}
         <Client
           key="review"
           module="./reviewer.tsx"
-          props={{ review: r, background: BACKGROUND, focused: e.props.isFocused }}
+          props={{ review: r, ...(await paletteOf($)) }}
           width="100%"
-          height={Math.max(8, e.props.scroll.bodyRows - 1)}
+          height={Math.max(8, e.props.scroll.bodyRows)}
         />
+        <Box height={0} overflow="hidden" flexDirection="row">
+          <Button key={ARROW_UP} plain label="↑" onPress={() => pressKeys($, ['up'])} />
+          {field}
+          <Button key={ARROW_DOWN} plain label="↓" onPress={() => pressKeys($, ['down'])} />
+        </Box>
       </Box>
     )
   })

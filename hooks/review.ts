@@ -188,8 +188,17 @@ export function arm(r: FbReview, what: 'submit' | 'cancel'): FbReview | 'submit'
   const status =
     what === 'submit'
       ? 'Нажмите s ещё раз, чтобы отправить сразу (--send).'
-      : `Нажмите q ещё раз, чтобы выбросить ${r.comments.length} комментари(я/ев).`
+      : `Нажмите q ещё раз, чтобы выбросить ${commentCount(r.comments.length)}.`
   return { ...r, armed: what, status }
+}
+
+/** `1 комментарий`, `3 комментария`, `5 комментариев`. */
+export function commentCount(n: number): string {
+  const tens = n % 100
+  const ones = n % 10
+  const form = tens >= 11 && tens <= 14 ? 'комментариев' : ones === 1 ? 'комментарий' : ones >= 2 && ones <= 4 ? 'комментария' : 'комментариев'
+
+  return `${n} ${form}`
 }
 
 function quoted(lines: string[], start: number, end: number, max = 12): string {

@@ -2,16 +2,26 @@
 import type { FbReview } from '../types'
 import { blockIndex, blocksOf, currentRange, lineRef, linesOf } from './review'
 
-const HINTS = 'j/k ↑↓ · v выделить · c коммент · m рендер · f весь экран · s в промпт · q отмена · ? все клавиши'
-const DRAFT_HINTS = 'Enter сохранить · ⇧Enter новая строка · ←→↑↓ Home/End · пустой Enter — отмена'
-const PREVIEW_HINTS = 'j/k блок · v выделить · c коммент · m исходник · f весь экран · s в промпт · q отмена · ? все клавиши'
+/** A hint: the key, drawn bold, and what it does. */
+export type Hint = [string, string]
+
+const HINTS: Hint[] = [
+  ['j/k', 'строка'], ['v', 'выделить'], ['Enter', 'коммент'], ['m', 'рендер'], ['f', 'весь экран'],
+  ['s', 'в промпт'], ['q', 'отмена'], ['?', 'все клавиши'],
+]
+const DRAFT_HINTS: Hint[] = [['Enter', 'сохранить'], ['⇧Enter', 'новая строка'], ['пустой Enter', 'отмена']]
+const PREVIEW_HINTS: Hint[] = [
+  ['j/k', 'блок'], ['v', 'выделить'], ['Enter', 'коммент'], ['m', 'исходник'], ['f', 'весь экран'],
+  ['s', 'в промпт'], ['q', 'отмена'], ['?', 'все клавиши'],
+]
+export const HINT_GAP = ' · '
 
 const snippet = (lines: string[]) => {
   const first = lines.find(l => l.trim() !== '')?.replace(/[`*_#>|]/g, '').replace(/\s+/g, ' ').trim() ?? ''
   return first.length > 40 ? `${first.slice(0, 39)}…` : first
 }
 
-export function titleOf(r: FbReview, lines: string[], needsClick: boolean) {
+export function titleOf(r: FbReview, lines: string[]) {
   const blocks = blocksOf(r.text)
   const parts = [
     r.preview
@@ -21,12 +31,14 @@ export function titleOf(r: FbReview, lines: string[], needsClick: boolean) {
   if (r.anchor !== null) parts.push(`выделение ${lineRef(currentRange(r))}`)
   parts.push(`комментариев: ${r.comments.length}`)
   if (r.send) parts.push('--send')
-  if (needsClick) parts.push('ctrl+x Tab или клик по панели — чтобы клавиши шли сюда')
 
   return { head: `feedback · ответ #${r.index} «${snippet(lines)}»`, tail: ` · ${parts.join(' · ')}` }
 }
 
-export const hintOf = (r: FbReview) => (r.draft ? DRAFT_HINTS : r.preview ? PREVIEW_HINTS : HINTS)
+export const hintsOf = (r: FbReview) => (r.draft ? DRAFT_HINTS : r.preview ? PREVIEW_HINTS : HINTS)
+
+/** The hint row as plain text: what rowsOf counts. */
+export const hintOf = (r: FbReview) => hintsOf(r).map(([key, what]) => `${key} ${what}`).join(HINT_GAP)
 
 // Greedy word wrap, as the terminal breaks a Text: a word that would cross the edge
 // starts the next row, one longer than a row is cut across rows. Over, never under:

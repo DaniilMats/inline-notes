@@ -7,6 +7,7 @@ import {
   arm,
   blocksOf,
   buildPrompt,
+  commentCount,
   deleteAtCursor,
   handleKey,
   keyName,
@@ -344,6 +345,39 @@ test('a mark left by an older version (a string) still draws the pane and reads 
   expect(await ui.find({ text: /строка 1\/4/, in: 'review' })).toBeDefined()
   await ui.input({ key: 'keys', text: markOf(0) + 'j', kind: 'change' })
   expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
+})
+
+test('↑ and ↓ off the one-line key field move the cursor and leave the ring on the field', async ($, on) => {
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: REPLY, toolUses: [] }] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 1 }))
+  let moved = 0
+  on('ui.focus', () => {
+    moved++ // the engine moves the ring where no hook kept it
+    return {}
+  })
+  await run($, '')
+  const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
+  // The kit hands hooks the call's own arguments; the engine raises the move with these fields.
+  const arrow = (element: string) =>
+    $.ui.focus({ requestId: 'fb', key: element, component: 'Pane', element, origin: { kind: 'person' } } as Parameters<typeof $.ui.focus>[0])
+  expect((await arrow('arrow-down')).deny).toBeDefined()
+  await arrow('arrow-down')
+  await ui.redraw()
+  expect(await ui.find({ text: /строка 3\/4/, in: 'review' })).toBeDefined()
+  await arrow('arrow-up')
+  await ui.redraw()
+  expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
+  expect(moved).toBe(0) // the ring stayed on the field
+  expect(await ui.find({ text: /ctrl\+x|c коммент/, in: 'review' })).toBeUndefined() // no click hint, no `c` hint
+})
+
+test('comment counts take the Russian plural', () => {
+  expect([1, 2, 4, 5, 11, 12, 21, 22, 25, 111].map(commentCount)).toEqual([
+    '1 комментарий', '2 комментария', '4 комментария', '5 комментариев', '11 комментариев',
+    '12 комментариев', '21 комментарий', '22 комментария', '25 комментариев', '111 комментариев',
+  ])
 })
 
 test('the key field reads typing wherever the caret is, before and after a swap reaches it', () => {

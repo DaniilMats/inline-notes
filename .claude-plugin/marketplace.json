@@ -1,5 +1,12 @@
 {
   "name": "inline-notes",
-  "owner": { "name": "Daniil Matsyutsya" },
-  "plugins": [{ "name": "inline-notes", "source": "./" }]
+  "description": "Line-by-line review of Claude's replies inside Claude Code",
+  "owner": { "name": "Daniil Matsyutsya", "url": "https://github.com/DaniilMats" },
+  "plugins": [
+    {
+      "name": "inline-notes",
+      "source": "./",
+      "description": "/fb: comment on any line of a Claude reply, like a pull request, and send every comment back in one prompt"
+    }
+  ]
 }
