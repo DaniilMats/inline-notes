@@ -4,15 +4,21 @@
 // State lives here (a post per frame keeps only the last); the hooks module gets
 // a `sync` snapshot to reopen from and a `finish` with the outcome. A review the
 // hooks changed themselves (a wheel scroll) comes back with a higher `rev` and is adopted.
+// While a comment is typed the hooks draw its field between two of these: `above` ends with
+// the comment's line or block, `below` goes on after it.
 import type { ClientSurface, RenderElement } from 'claude-code'
 
 import type { FbReview } from '../types'
-import { BLOCK_GUTTER, GUTTER, HINT_GAP, blockRows, draftRows, headerRows, hintsOf, isTable, measure, rowsOf, tableRows, titleOf, windowOf } from './layout'
+import { BLOCK_GUTTER, GUTTER, HINT_GAP, blockRows, headerRows, hintsOf, isTable, measure, rowsOf, tableRows, titleOf, windowOf } from './layout'
 import { blockIndex, blocksOf, commentsAt, currentRange, handleKey, isSelected, lineRef, setCursor, startAdd, startEdit } from './review'
 import type { Outcome } from './review'
 
-/** `background` paints the body, `highlight` the cursor's line; the header stays on the pane's own frame color. */
-type Props = { review: FbReview; background: string; highlight: string }
+/**
+ * `background` paints the body, `highlight` the cursor's line; the header stays on the pane's own frame color.
+ * `part`: the whole window, or the side of a comment's field this instance draws. `rows`: the pane's,
+ * which the window is fitted in whatever this instance's share of it.
+ */
+type Props = { review: FbReview; background: string; highlight: string; part?: 'whole' | 'above' | 'below'; rows?: number }
 type State = { review: FbReview }
 
 // Theme keys, so the accents follow the person's theme as Claude Code's own do.
@@ -30,13 +36,13 @@ const HELP: [string, string][] = [
   ['d (в)', 'удалить комментарий на строке'],
   ['n / N (т / Т)', 'следующий / предыдущий комментарий'],
   ['m (ь)', 'отрисованный markdown: таблицы как в ответе, курсор и комментарии — по блокам (абзац, пункт, таблица, код)'],
-  ['f (а)', 'панель на весь экран и обратно'],
+  ['f (а)', 'панель шире и обратно: насколько даёт Claude Code, с 2.1.306 — до половины экрана'],
   ['w (ц)', 'ревью в браузере: строки во всю ширину, комментарии мышью; «Скопировать промпт» — и вставить сюда'],
   ['s (ы)', 'собрать комментарии в поле ввода; с --send — отправить сразу, двойным нажатием'],
   ['q (й)', 'закрыть ревью; с комментариями — двойным нажатием'],
   ['Esc', 'вернуться в поле ввода Claude; панель и комментарии остаются, /fb или клик возвращают'],
   ['скриншот', 'в панель не вставить; после s промпт в обычном поле ввода — вставьте туда перед Enter'],
-  ['в поле комментария', 'текст печатается в рамку под строкой; Enter сохраняет, Backspace стирает; после клика по панели ещё ⇧Enter — новая строка, стрелки/Home/End/ctrl+a/ctrl+e двигают каретку'],
+  ['в поле комментария', 'Enter сохраняет, пустой Enter отменяет, ⇧Enter — новая строка; стрелки, Home/End, вставка и голосовой ввод — как в поле ввода Claude'],
 ]
 
 // Reviews saved by earlier versions lack the newer fields.
@@ -61,36 +67,44 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
   if (adopt) surface.setState(state)
 
   const r = state.review
+  const part = props.part ?? 'whole'
   const columns = surface.columns || 80
-  const rows = surface.rows || 24
+  const rows = props.rows || surface.rows || 24
   // `top` counts what the window scrolls over: lines, or blocks when rendered. The hooks
   // fit the same window from the same review, to put the terminal's caret on it.
   const { inner, viewport, units, top } = windowOf(r, columns, rows)
   const { lines, width, content, heights } = measure(r, inner)
 
   // Every change made here: a higher rev, a refit of the window, a copy to the hooks.
-  const apply = (next: FbReview | Outcome, from: State) => {
+  // `focus`: a click gave this region the keyboard, which the hooks hand back to a field.
+  const apply = (next: FbReview | Outcome, from: State, focus = false) => {
     if (typeof next === 'string') return surface.post({ type: 'finish', outcome: next, review: from.review })
-    if (next === from.review) return
+    if (next === from.review) return focus ? surface.post({ type: 'sync', review: from.review, focus }) : undefined
     const moved = { ...next, rev: (from.review.rev ?? 0) + 1 }
     const review = { ...moved, top: windowOf(moved, surface.columns || columns, surface.rows || rows).top }
     surface.setState({ ...from, review })
-    surface.post({ type: 'sync', review })
+    surface.post({ type: 'sync', review, focus })
   }
   const current = () => surface.state ?? state
 
   surface.onKey(ev => {
     const from = current()
+    // A comment is typed in its own field, which holds what was typed: a key that reached this
+    // region instead hands the keyboard back to the field.
+    if (from.review.draft) return apply(from.review, from, true)
     apply(handleKey(from.review, ev, Math.max(1, viewport - 2)), from)
   })
 
   // The pane: the header on the frame's own color, so it reads as the pane's title bar,
-  // and the body filling the rest in `background`.
-  const frame = (header: RenderElement, body: RenderElement[]) => (
-    <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
-      <Box flexDirection="column" flexShrink={0} paddingX={1}>
-        {header}
-      </Box>
+  // and the body filling the rest in `background`. Above a comment's field the frame is as
+  // tall as what it draws, so the field follows the line exactly; below it, it fills the rest.
+  const frame = (header: RenderElement | null, body: RenderElement[]) => (
+    <Box flexDirection="column" width={columns} {...(part === 'above' ? {} : { height: part === 'below' ? surface.rows : rows })} overflow="hidden">
+      {header && (
+        <Box flexDirection="column" flexShrink={0} paddingX={1}>
+          {header}
+        </Box>
+      )}
       <Box flexDirection="column" flexGrow={1} backgroundColor={props.background} paddingX={1} overflow="hidden">
         {body}
       </Box>
@@ -121,40 +135,31 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
 
   const { head, tail } = titleOf(r, lines)
   const hints = hintsOf(r)
-  const header = (
-    <>
-      <Text>
-        <Text bold>{head}</Text>
-        {tail}
-      </Text>
-      <Text>
-        {hints.flatMap(([key, what], i) => [
-          ...(i > 0 ? [HINT_GAP] : []),
-          <Text bold>{key}</Text>,
-          ` ${what}`,
-        ])}
-      </Text>
-      {r.status !== '' && <Text bold>{r.status}</Text>}
-    </>
-  )
-
-  const draft = r.draft
-  const chars = draft ? [...r.draftText] : []
-  // The comment being typed, under its line or block: the field above the reviewer types into it.
-  const draftBox = (left: number, boxWidth: number) =>
-    draft && (
-      <Box flexDirection="column" flexShrink={0} borderStyle="round" borderColor={ACCENT} paddingX={1} marginLeft={left} width={boxWidth}>
-        <Text color={ACCENT}>
-          {draft.id === undefined ? 'Новый комментарий' : `Правка #${draft.id}`} к {lineRef(draft)}
+  const header =
+    part === 'below' ? null : (
+      <>
+        <Text>
+          <Text bold>{head}</Text>
+          {tail}
         </Text>
         <Text>
-          {chars.slice(0, r.draftCaret).join('')}
-          <Text inverse>{chars[r.draftCaret]?.replace('\n', ' ') || ' '}</Text>
-          {chars[r.draftCaret] === '\n' ? '\n' : ''}
-          {chars.slice(r.draftCaret + 1).join('')}
+          {hints.flatMap(([key, what], i) => [
+            ...(i > 0 ? [HINT_GAP] : []),
+            <Text bold>{key}</Text>,
+            ` ${what}`,
+          ])}
         </Text>
-      </Box>
+        {r.status !== '' && <Text bold>{r.status}</Text>}
+      </>
     )
+
+  const draft = r.draft
+  const blocks = blocksOf(r.text)
+  // The line or block the comment's field follows: `above` draws up to it, `below` from the next.
+  const fieldAt = draft ? (r.preview ? blockIndex(blocks, draft.end) : draft.end) : -1
+  const first = part === 'below' ? fieldAt + 1 : top
+  const until = part === 'above' ? fieldAt + 1 : Number.MAX_SAFE_INTEGER
+  const budget = part === 'below' ? surface.rows : viewport
   const count = (n: number) => <Text color={COMMENT}>{n === 0 ? ' ' : n > 9 ? '*' : String(n)}</Text>
   const comment = (text: string, left: number, boxWidth: number) => (
     <Box marginLeft={left} width={boxWidth}>
@@ -163,16 +168,16 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
   )
 
   // Which source line (and which comment) each drawn row belongs to, for clicks.
-  const hits: Hit[] = Array.from({ length: headerRows(r, lines, inner) }, () => ({ line: -1 }))
+  const hits: Hit[] = Array.from({ length: header ? headerRows(r, lines, inner) : 0 }, () => ({ line: -1 }))
   // A click puts the cursor on a line or block, a second one there comments, one on a comment edits it.
   const clicks = () =>
     surface.onPointer(ev => {
       if (ev.type !== 'down' || ev.button !== 'left') return
       const from = current()
       const hit = hits[ev.y]
-      if (!hit || hit.line < 0 || from.review.draft) return
+      if (!hit || hit.line < 0 || from.review.draft) return apply(from.review, from, true)
       const at = setCursor(from.review, hit.line)
-      apply(hit.edit !== undefined ? startEdit(at, hit.edit) : at.cursor === from.review.cursor ? startAdd(at) : at, from)
+      apply(hit.edit !== undefined ? startEdit(at, hit.edit) : at.cursor === from.review.cursor ? startAdd(at) : at, from, true)
     })
 
   if (r.preview) {
@@ -180,24 +185,21 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
     // the window starts at. The last block runs past the bottom; unshrunk, the overflow
     // is cut there and not squeezed out of the draft box above it.
     // ponytail: clicks map by blockHeights' guess, as the caret does: tables exact, prose may land a block off further down; a pressable gutter per block if that misses in practice
-    const blocks = blocksOf(r.text)
     const selected = r.anchor === null ? null : currentRange(r)
     const wide = Math.max(10, inner - BLOCK_GUTTER)
     const shown: RenderElement[] = []
     let filled = 0
-    for (let i = top; i < blocks.length && filled < viewport; i++) {
+    for (let i = first; i < Math.min(blocks.length, until) && filled < budget; i++) {
       const b = blocks[i]!
       const source = lines.slice(b.start, b.end + 1)
       const table = isTable(source) ? tableRows(source, wide) : null
-      const gap = i > top && b.start > blocks[i - 1]!.end + 1
+      const gap = i > first && b.start > blocks[i - 1]!.end + 1
       const notes = r.comments
         .filter(c => c.id !== draft?.id && blockIndex(blocks, c.end) === i)
         .map(c => ({ id: c.id, text: `↳ #${c.id} ${lineRef(c)}: ${c.body}` }))
-      const drafted = !!draft && blockIndex(blocks, draft.end) === i
       if (gap) hits.push({ line: -1 })
       for (let k = 0; k < blockRows(source, wide); k++) hits.push({ line: b.start })
       for (const n of notes) for (let k = 0; k < rowsOf(n.text, wide); k++) hits.push({ line: b.start, edit: n.id })
-      if (drafted) for (let k = 0; k < draftRows(r, wide); k++) hits.push({ line: b.start })
       const isCursor = i === units.at
       const marked = selected !== null && selected.start <= b.start && b.end <= selected.end
       shown.push(
@@ -212,7 +214,6 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
             </Box>
           </Box>
           {notes.map(n => comment(n.text, BLOCK_GUTTER, wide))}
-          {drafted ? draftBox(BLOCK_GUTTER, wide) : null}
         </Box>,
       )
       filled += units.heights[i] ?? 1
@@ -223,7 +224,7 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
 
   const body: RenderElement[] = []
   let used = 0
-  for (let i = top; i < lines.length && used < viewport; i++) {
+  for (let i = first; i < Math.min(lines.length, until) && used < budget; i++) {
     const isCursor = i === r.cursor
     const lineRows = rowsOf(lines[i] || ' ', content)
     for (let k = 0; k < lineRows; k++) hits.push({ line: i })
@@ -245,10 +246,6 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
       const text = `↳ #${c.id} ${lineRef(c)}: ${c.body}`
       for (let k = 0; k < rowsOf(text, content); k++) hits.push({ line: i, edit: c.id })
       body.push(comment(text, width + GUTTER, content))
-    }
-    if (draft && draft.end === i) {
-      for (let k = 0; k < draftRows(r, content); k++) hits.push({ line: i })
-      body.push(draftBox(width + GUTTER, content)!)
     }
     used += heights[i] ?? 1
   }

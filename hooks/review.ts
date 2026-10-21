@@ -146,6 +146,9 @@ export function startEdit(r: FbReview, id?: number): FbReview {
   return { ...r, draft: { id: c.id, start: c.start, end: c.end }, draftText: c.body, draftCaret: [...c.body].length, armed: null, status: '' }
 }
 
+/** Names the comment being typed, so another one tells itself from it; none open, undefined. */
+export const draftKeyOf = (r: FbReview) => (r.draft ? `draft:${r.opened}:${r.draft.id ?? 'new'}:${r.draft.start}-${r.draft.end}` : undefined)
+
 export function saveDraft(r: FbReview, value: string): FbReview {
   const draft = r.draft
   if (!draft) return r
@@ -295,6 +298,9 @@ export function editDraft(r: FbReview, ev: { key: string; ctrl?: true; shift?: t
 /** What a key asks of the hooks: fill the prompt, drop the review, or open it in the browser (which keeps it). */
 export type Outcome = 'submit' | 'cancel' | 'web'
 
+// f asks for the whole screen; a docked pane gets what Claude Code grants, since 2.1.306 under half of it.
+const WIDE = 'Панель шире, насколько даёт Claude Code. Мало места — w откроет ревью в браузере.'
+
 /** One key against the review: the next state, or the review's outcome. */
 export function handleKey(
   r: FbReview,
@@ -302,6 +308,8 @@ export function handleKey(
   page: number,
 ): FbReview | Outcome {
   if (r.help) return { ...r, help: false } // any key closes the help
+  // A comment is typed in a field of its own; a key gets here only when typed before that field
+  // was first drawn, and goes into draftText, which the field starts from.
   if (r.draft) return ev.key === 'return' && !ev.shift ? saveDraft(r, r.draftText) : editDraft(r, ev)
   const name = keyName(ev)
   if (name === '?') return { ...r, help: true }
@@ -321,7 +329,7 @@ export function handleKey(
     case 'n': return jumpNext(r)
     case 'N': return jumpPrev(r)
     case 'm': return setCursor({ ...r, preview: !r.preview }, r.cursor)
-    case 'f': return { ...r, wide: !r.wide }
+    case 'f': return { ...r, wide: !r.wide, status: r.wide ? '' : WIDE }
     case 'w': return 'web'
     case 's': return arm(r, 'submit')
     case 'q': return arm(r, 'cancel')

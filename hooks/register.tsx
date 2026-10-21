@@ -3,14 +3,16 @@
 // Client (./reviewer.tsx) that reads keys raw, so the Russian layout works too. A Client
 // takes the keyboard only from a click, so a one-line field under it, drawn zero rows tall,
 // takes the keys whenever the pane does (/fb, a click) and feeds them to the same handleKey.
+// While a comment is typed that field is the comment's own, drawn under its line: a field
+// takes a paste, dictation and the caret keys as the prompt box does.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { FbReview } from '../types'
 import { GENERATIONS, fieldKeys, fieldStart, markOf } from './field'
 import type { Field } from './field'
-import { caretOf, windowOf } from './layout'
-import { blocksOf, buildPrompt, commentCount, handleKey, linesOf, scrollBy, startReview, walkBlocks } from './review'
+import { SUBMIT, caretOf, fieldColumns, fieldRows, windowOf } from './layout'
+import { blocksOf, buildPrompt, commentCount, draftKeyOf, handleKey, lineRef, linesOf, saveDraft, scrollBy, startReview, walkBlocks } from './review'
 import type { Outcome } from './review'
 
 const PANE = 'fb'
@@ -48,8 +50,12 @@ let screen = { columns: 0, rows: 0 }
 // The reviewer's region as last drawn: what its window is fitted in.
 // ponytail: module state; after a reload the first change waits for a draw to refit
 let region = { columns: 0, rows: 0 }
+// What a comment's field was first drawn with, drawn again unchanged so a redraw never
+// overwrites typing; another comment, another seed.
+// ponytail: module state; after a reload the field is seeded from the review, which holds what was typed
+let seed = { key: '', text: '' }
 
-type Message = { type: 'sync'; review: FbReview } | { type: 'finish'; outcome: Outcome; review: FbReview }
+type Message = { type: 'sync'; review: FbReview; focus?: boolean } | { type: 'finish'; outcome: Outcome; review: FbReview }
 
 // The data comes from our own module, but it crossed a boundary as `unknown`.
 function asMessage(data: unknown): Message | undefined {
@@ -73,7 +79,8 @@ function bump(r: FbReview, patch: Partial<FbReview>): FbReview {
 }
 
 // Wide, the pane asks for the whole screen (columns docked, rows inline); an open
-// without them goes back to the engine's share. A size the person dragged wins either way.
+// without them goes back to the engine's share. A size the person dragged wins either way, and
+// since Claude Code 2.1.306 a dock stays under half the terminal, however much it asks for.
 const openPane = ($: EngineInterface, r: FbReview) =>
   $.ui.open({
     id: PANE,
@@ -85,6 +92,16 @@ const openPane = ($: EngineInterface, r: FbReview) =>
 // What a change of the review asks of the pane: its size.
 async function follow($: EngineInterface, prev: FbReview, next: FbReview) {
   if (!!prev.wide !== !!next.wide) await openPane($, next).catch(() => undefined)
+}
+
+// The keyboard goes back to the field, so a paste lands where the person types. A click hands
+// it to the reviewer's region, which reads keys but no paste (that goes to the prompt box),
+// and a site that lost it refuses the move: opening the pane with focus takes it back first.
+async function focusField($: EngineInterface, r: FbReview) {
+  const moved = await $.ui.focus({ requestId: PANE, key: 'keys' }).catch(() => ({ deny: 'failed' }))
+  if (moved.deny === undefined) return
+  await openPane($, r).catch(() => undefined)
+  await $.ui.focus({ requestId: PANE, key: 'keys' }).catch(() => undefined)
 }
 
 async function close($: EngineInterface) {
@@ -165,13 +182,31 @@ const keyOf = (ch: string) => (ch === ' ' ? 'space' : ch === '\r' ? 'return' : c
 // Characters typed into the key field, run through the reviewer's own key handling.
 const typeKeys = ($: EngineInterface, typed: string) => pressKeys($, [...typed].map(keyOf))
 
-// Keys by name (`j`, `down`), one change after another.
-function pressKeys($: EngineInterface, keys: string[]) {
-  const run = () => runKeys($, keys)
-  handling = handling.then(run, run)
+// One change after another: keys, and a comment's typing and saving.
+function queue(run: () => Promise<unknown>) {
+  handling = handling.then(run, run).then(() => undefined)
 
   return handling
 }
+
+// Keys by name (`j`, `down`).
+const pressKeys = ($: EngineInterface, keys: string[]) => queue(() => runKeys($, keys))
+
+// The comment's text, as its field holds it.
+const typeDraft = ($: EngineInterface, value: string) =>
+  queue(() => update($, review, cur => (cur?.draft ? bump(cur, { draftText: value, draftCaret: [...value].length }) : cur)))
+
+// Enter in a comment's field saves it, or drops it when empty; the field goes back to reading
+// keys, from a mark of the next generation.
+const saveTyped = ($: EngineInterface, value: string) =>
+  queue(async () => {
+    const prev = await read($, review)
+    if (!prev?.draft) return
+    await update($, review, () => bump(saveDraft(prev, value), {}))
+    const gen = (drawnGen + 1) % GENERATIONS
+    typing = fieldStart(gen)
+    await update($, mark, () => gen)
+  })
 
 async function runKeys($: EngineInterface, keys: string[]) {
   const prev = await read($, review)
@@ -246,10 +281,14 @@ export const register: Register = on => {
     const current = await read($, review)
     if (!m || current?.opened !== m.review.opened) return next(e) // a stale reviewer's word
     if (m.type === 'finish') await finish($, m.outcome, m.review)
-    else if ((m.review.rev ?? 0) >= (current.rev ?? 0)) {
-      // A post older than our own change is dropped.
-      await update($, review, () => m.review)
-      await follow($, current, m.review)
+    else {
+      if ((m.review.rev ?? 0) >= (current.rev ?? 0)) {
+        // A post older than our own change is dropped.
+        await update($, review, () => m.review)
+        await follow($, current, m.review)
+      }
+      const now = (await read($, review)) ?? current
+      if (m.focus || draftKeyOf(current) !== draftKeyOf(now)) await focusField($, now)
     }
 
     return next(e)
@@ -268,9 +307,10 @@ export const register: Register = on => {
 
   // The field is one line, so ↑ and ↓ there move the ring to the element before or after it:
   // a hidden Button on each side, whose move is the arrow and keeps the ring on the field.
+  // A comment's field walks its own rows; past its edge the arrows stay put.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
     if (e.element !== ARROW_UP && e.element !== ARROW_DOWN) return next(e)
-    await pressKeys($, [e.element === ARROW_UP ? 'up' : 'down'])
+    if (!(await read($, review))?.draft) await pressKeys($, [e.element === ARROW_UP ? 'up' : 'down'])
 
     return { deny: 'the arrow moves the review cursor' }
   })
@@ -286,39 +326,64 @@ export const register: Register = on => {
     if (!r) return <Text dimColor>Нет открытого ревью: /fb</Text>
     drawnGen = genOf(await read($, mark))
 
-    // Typing a comment goes through the same field: each character lands in the box under its
-    // line or block, so nothing is typed into a second field.
+    region = { columns: e.props.bodyColumns, rows: Math.max(8, e.props.scroll.bodyRows) }
+    const palette = await paletteOf($)
+    const draft = r.draft
+    // A comment closed, the next one opened is seeded afresh, even one edited again.
+    const at = draftKeyOf(r) ?? ''
+    if (seed.key !== at) seed = { key: at, text: r.draftText }
+    // The engine wraps a field's text to the whole body less its Enter hint, so the comment's
+    // field spans the body: framed by rules above and below, not a box's sides, which would cut it.
+    const title = draft ? `── ${draft.id === undefined ? 'Новый комментарий' : `Правка #${draft.id}`} к ${lineRef(draft)} ` : ''
+    const rule = (head: string) => head + '─'.repeat(Math.max(0, region.columns - [...head].length))
+
     const field = (
       <Input
         key="keys"
         autoFocus
-        value={markOf(drawnGen)}
+        value={draft ? seed.text : markOf(drawnGen)}
+        {...(draft ? { rows: fieldRows(r, fieldColumns(region.columns)), submitLabel: SUBMIT } : {})}
         onInput={async (value: string) => {
+          if (draft) return typeDraft($, value)
           const got = fieldKeys(typing, drawnGen, value)
           typing = got.field
           if (got.keys !== '') await typeKeys($, got.keys)
         }}
-        onSubmit={() => typeKeys($, '\r')}
+        onSubmit={(value: string) => (draft ? saveTyped($, value) : typeKeys($, '\r'))}
       />
     )
 
-    // The field takes no room and draws nothing, but the terminal's caret stands where it is:
-    // so it sits on the cursor's marker, or at the insertion point of the comment being typed.
-    // The arrow Buttons around it, in document order, sit out of sight. A height-only resize
-    // catches up on the next keypress, which re-renders this pane with the new bodyRows.
-    region = { columns: e.props.bodyColumns, rows: Math.max(8, e.props.scroll.bodyRows) }
+    // Reading keys, the field takes no room and draws nothing, but the terminal's caret stands
+    // where it is: so it sits on the cursor's marker. Typing a comment, it is that comment's
+    // field, between the reviewer's rows up to the comment's line and those after it.
+    // Either way it is the same element in the same place, so the keyboard stays on it from the
+    // Enter that opens a comment to the one that saves it. The arrow Buttons around it, in
+    // document order, sit out of sight. A height-only resize catches up on the next keypress,
+    // which re-renders this pane with the new bodyRows.
     const caret = caretOf(r, region.columns, region.rows)
-    const hidden = (at: { x: number; y: number }, child: RenderElement) => (
-      <Box position="absolute" top={at.y} left={at.x} width={1} height={0} overflow="hidden">
+    const hidden = (spot: { x: number; y: number }, child: RenderElement) => (
+      <Box position="absolute" top={spot.y} left={spot.x} width={1} height={0} overflow="hidden">
         {child}
       </Box>
     )
+    const part = (name: 'whole' | 'above' | 'below') => ({ review: r, ...palette, part: name, rows: region.rows })
     return (
-      <Box flexDirection="column">
-        <Client key="review" module="./reviewer.tsx" props={{ review: r, ...(await paletteOf($)) }} width="100%" height={region.rows} />
+      <Box flexDirection="column" height={region.rows}>
+        <Client key="review" module="./reviewer.tsx" props={part(draft ? 'above' : 'whole')} width="100%" height={draft ? undefined : region.rows} />
         {hidden({ x: 0, y: -1 }, <Button key={ARROW_UP} plain label="↑" onPress={() => pressKeys($, ['up'])} />)}
-        {hidden(caret, field)}
+        <Box
+          {...(draft
+            ? { flexShrink: 0, backgroundColor: palette.background }
+            : { position: 'absolute' as const, top: caret.y, left: caret.x, width: 1, height: 0, overflow: 'hidden' as const })}
+        >
+          <Box flexDirection="column">
+            <Text color="claude" wrap="truncate-end">{draft ? rule(title) : ''}</Text>
+            {field}
+            {draft && <Text color="claude">{rule('')}</Text>}
+          </Box>
+        </Box>
         {hidden({ x: 0, y: -1 }, <Button key={ARROW_DOWN} plain label="↓" onPress={() => pressKeys($, ['down'])} />)}
+        {draft && <Client key="below" module="./reviewer.tsx" props={part('below')} width="100%" flexGrow={1} />}
       </Box>
     )
   })

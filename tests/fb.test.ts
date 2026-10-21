@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { fieldKeys, fieldStart, markOf } from '../hooks/field'
-import { blockRows, caretIn, caretOf, fitTop, headerRows, measure, rowsOf, tableRows } from '../hooks/layout'
+import { blockRows, caretOf, fieldColumns, fitTop, headerRows, measure, rowsOf, tableRows } from '../hooks/layout'
 import {
   arm,
   blocksOf,
@@ -158,7 +158,7 @@ test('rendered: comments take whole blocks and quote their lines', () => {
   expect(r.draft?.id).toBe(1)
 })
 
-test('f asks the pane for the whole screen and gives it back', async ($, on) => {
+test('f asks the pane for the whole screen, says Claude Code may grant less, and gives it back', async ($, on) => {
   on('session.messages', () => ({ value: [{ role: 'assistant', text: MD, toolUses: [] }] }))
   const opens: { columns?: number; rows?: number }[] = []
   on('ui.open', (_, e) => {
@@ -171,8 +171,10 @@ test('f asks the pane for the whole screen and gives it back', async ($, on) => 
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
   await ui.input({ key: 'keys', text: '\u2060а', kind: 'change' }) // f on the Russian layout
   expect(opens.at(-1)).toEqual({ columns: 120, rows: 30 })
+  expect(await ui.find({ text: /насколько даёт Claude Code.*w откроет/, in: 'review' })).toBeDefined()
   await ui.input({ key: 'keys', text: '\u200bf', kind: 'change' })
   expect(opens.at(-1)).toEqual({ columns: undefined, rows: undefined })
+  expect(await ui.find({ text: /насколько даёт/, in: 'review' })).toBeUndefined()
   await ui.input({ key: 'keys', text: '\u2060m', kind: 'change' }) // rendered: a block per Markdown
   expect(await ui.find({ text: /блок 1\/6 \(L1\)/, in: 'review' })).toBeDefined()
 })
@@ -198,7 +200,9 @@ test('w writes the review as a page, the reply kept as data, and opens it in the
 
   await run($, '')
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
-  for (const key of ['c', 'x', 'return', 'ц']) await ui.key({ key, in: 'review' }) // w on the Russian layout
+  await ui.key({ key: 'c', in: 'review' })
+  await ui.input({ key: 'keys', text: 'x' }) // Enter in the comment's field saves it
+  await ui.key({ key: 'ц', in: 'review' }) // w on the Russian layout
   expect(runs).toEqual([['open', '/tmp/fb/inline-notes-7.html']])
   expect(writes[0]?.path).toBe('/tmp/fb/inline-notes-7.html')
   const html = writes[0]!.text
@@ -235,7 +239,7 @@ test('w from the key field, where /fb leaves the keys, opens the page and the ke
   expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
 })
 
-test('rendered: the Client walks blocks with the arrows and boxes the draft under its block', async ($, on) => {
+test("rendered: the Client walks blocks with the arrows, and a comment's field sits under its block", async ($, on) => {
   on('session.messages', () => ({ value: [{ role: 'assistant', text: MD, toolUses: [] }] }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.close', () => ({ value: undefined }))
@@ -248,10 +252,12 @@ test('rendered: the Client walks blocks with the arrows and boxes the draft unde
   await ui.key({ key: 'up', in: 'review' })
   expect(await ui.find({ text: /блок 5\/6 \(L14-L15\)/, in: 'review' })).toBeDefined()
   await ui.key({ key: 'c', in: 'review' })
-  expect(await ui.find({ text: /Новый комментарий к L14-L15/, in: 'review' })).toBeDefined()
-  for (const key of ['о', 'к']) await ui.key({ key, in: 'review' })
-  await ui.key({ key: 'return', in: 'review' })
+  // The field sits between the reviewer's rows up to the block and those after it.
+  expect(await ui.find({ text: /Новый комментарий к L14-L15/ })).toBeDefined()
+  expect(await ui.find({ type: 'Client', key: 'below' })).toBeDefined()
+  await ui.input({ key: 'keys', text: 'ок' })
   expect(await ui.find({ text: /↳ #1 L14-L15: ок/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ type: 'Client', key: 'below' })).toBeUndefined()
 })
 
 test('rendered: the arrows walk blocks, a page five, Home/End to an edge', () => {
@@ -279,6 +285,12 @@ test('fitTop keeps the cursor in view at one viewport of cost', () => {
   const r = saveDraft(startAdd(setCursor(startReview(1, REPLY, false), 1)), 'заметка')
   const { heights } = measure(r, 60)
   expect(heights[1]).toBe(2) // the line and its comment row
+})
+
+test("the comment's text wraps where the engine wraps a field: its body less the Enter hint", () => {
+  expect(fieldColumns(100)).toBe(69) // ` ⏎ сохранить · shift+⏎ new line` beside it
+  expect(fieldColumns(40)).toBe(28) // the whole hint would leave under half: ` ⏎ сохранить` alone
+  expect(fieldColumns(20)).toBe(12) // the engine's floor
 })
 
 test('rowsOf wraps by words, as the terminal does', () => {
@@ -310,10 +322,9 @@ test('/fb in the pane: Russian keys drive the Client, s fills the prompt', async
   expect((await run($, '')).text).toContain('#2')
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
   expect(await ui.find({ text: 'Поход в базу один.', in: 'review' })).toBeDefined()
-    await ui.key({ key: 'о', in: 'review' }) // j
+  await ui.key({ key: 'о', in: 'review' }) // j
   await ui.key({ key: 'с', in: 'review' }) // c
-  for (const key of ['р', 'у', 'ч', 'к', 'а', 'space', '?']) await ui.key({ key, in: 'review' })
-  await ui.key({ key: 'return', in: 'review' })
+  await ui.input({ key: 'keys', text: 'ручка ?' })
   expect(await ui.find({ text: /↳ #1 L2: ручка \?/, in: 'review' })).toBeDefined()
   expect((await run($, '3')).text).toContain('сначала s') // a second review never drops this one's comments
   await ui.key({ key: 'ы', in: 'review' }) // s
@@ -341,7 +352,9 @@ test('a refused prompt keeps the review; a busy box gets the comments appended',
 
   await run($, '')
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
-  for (const key of ['c', 'x', 'return', 's']) await ui.key({ key, in: 'review' })
+  await ui.key({ key: 'c', in: 'review' })
+  await ui.input({ key: 'keys', text: 'x' })
+  await ui.key({ key: 's', in: 'review' })
   expect(closed).toBe(0)
   expect(await ui.find({ text: /Не отправлено: поле ввода недоступно/, in: 'review' })).toBeDefined()
   expect(await ui.find({ text: /↳ #1 L1: x/, in: 'review' })).toBeDefined() // the comment survived
@@ -374,16 +387,22 @@ test('the key field drives the review without a click; Enter there opens a comme
   await type(markOf(1) + 'jjkk') // typed before the next swap reached it: goes on from the last change
   expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
   await ui.input({ key: 'keys', text: markOf(3), kind: 'submit' }) // Enter: a comment on line 2
-  expect(await ui.find({ text: /Новый комментарий к L2/, in: 'review' })).toBeDefined()
-  // The comment is typed through the same field, here with the caret before the mark, and lands in the box.
-  await type('шлём' + markOf(4))
-  expect(await ui.find({ text: /^шлём\s*$/, in: 'review' })).toBeDefined() // the caret after it
-  await type('шлём скриншотт' + markOf(4))
-  await type(markOf(6).slice(0, 3)) // the field reset to generation 6, then Backspace ate a mark character
-  expect(await ui.find({ text: /^шлём скриншот\s*$/, in: 'review' })).toBeDefined()
-  await ui.input({ key: 'keys', text: markOf(7), kind: 'submit' })
+  // The same field is now the comment's: under line 2, between rules, a row to type on and one spare.
+  expect(await ui.find({ text: /^── Новый комментарий к L2 ─+$/ })).toBeDefined()
+  const field = async () => (await ui.find({ type: 'Input', key: 'keys' }))!.props
+  expect(await field()).toMatchObject({ value: '', rows: 2 })
+  // It spans the body and grows as the engine wraps it: at the body less the Enter hint.
+  const long = 'длинный комментарий '.repeat(8)
+  await type(long)
+  expect(rowsOf(long, fieldColumns(100))).toBe(3)
+  expect((await field()).rows).toBe(4)
+  await type('шлём скриншотт')
+  await type('шлём скриншот') // Backspace
+  await ui.input({ key: 'keys', text: 'шлём скриншот', kind: 'submit' })
   expect(await ui.find({ text: /↳ #1 L2: шлём скриншот$/, in: 'review' })).toBeDefined()
-  await type(markOf(8) + 's')
+  // Saved, it reads keys again, from a fresh mark.
+  expect((await field()).rows).toBeUndefined()
+  await type(String((await field()).value) + 's')
   expect(filled).toContain('1. L2\n> 2: Поход в базу один.\nКомментарий:\nшлём скриншот')
 })
 
@@ -444,9 +463,7 @@ test('rendered, a click picks a block, a second one comments on it, and one on a
   let r: FbReview = { ...startReview(1, REPLY, false), preview: true }
   const header = () => headerRows(r, linesOf(REPLY), 98)
   const click = (y: number) => ui.pointer({ type: 'down', x: 10, y, button: 'left', in: 'review' })
-  const typed = async (text: string) => {
-    for (const key of [...text, 'return']) await ui.key({ key, in: 'review' })
-  }
+  const typed = (text: string) => ui.input({ key: 'keys', text }) // typed into the comment's field, then Enter
   await ui.key({ key: 'm', in: 'review' })
   expect(await ui.find({ text: /блок 1\/2/, in: 'review' })).toBeDefined()
   await click(header() + 2) // the blank row between the blocks
@@ -456,7 +473,7 @@ test('rendered, a click picks a block, a second one comments on it, and one on a
   expect(await ui.find({ text: /блок 2\/2/, in: 'review' })).toBeDefined()
   expect(await ui.find({ text: /Новый комментарий/, in: 'review' })).toBeUndefined() // the first click only moves
   await click(header() + 3)
-  expect(await ui.find({ text: /Новый комментарий к L4/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /Новый комментарий к L4/ })).toBeDefined()
   await typed('а')
   r = saveDraft(startAdd(r), 'а')
   await click(header() + 3)
@@ -464,7 +481,42 @@ test('rendered, a click picks a block, a second one comments on it, and one on a
   r = saveDraft(startAdd(r), 'б')
   // Both comments sit a row each under the block; a click on the second edits it, not the first.
   await click(header() + 5)
-  expect(await ui.find({ text: /Правка #2 к L4/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /Правка #2 к L4/ })).toBeDefined()
+  expect((await ui.find({ type: 'Input', key: 'keys' }))!.props.value).toBe('б') // the field starts from its text
+  await typed('бв')
+  await click(header() + 5)
+  expect((await ui.find({ type: 'Input', key: 'keys' }))!.props.value).toBe('бв') // edited again, from the saved text
+})
+
+test('a click hands the keyboard back to the field, and a key that reaches the reviewer is not typed into a comment', async ($, on) => {
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: REPLY, toolUses: [] }] }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 1 }))
+  // A region that took the keyboard with a click refuses $.ui.focus (the kit has no ring, so every
+  // call is refused): the pane is opened with focus again, which hands the keyboard to the field.
+  const focused: boolean[] = []
+  on('ui.open', (_, e) => {
+    focused.push(e.focus === true)
+    return { value: { isPlaced: true } }
+  })
+  await run($, '')
+  const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
+  await ui.resize({ columns: 100, rows: 30, in: 'review' })
+  const header = headerRows(startReview(1, REPLY, false), linesOf(REPLY), 98)
+  focused.length = 0
+  await ui.pointer({ type: 'down', x: 10, y: header + 1, button: 'left', in: 'review' })
+  await ui.advance(16) // a post reaches the hooks on the next frame
+  expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
+  expect(focused).toEqual([true])
+  // A comment open, a key the reviewer reads is handed back to the field, not typed.
+  await ui.key({ key: 'c', in: 'review' })
+  await ui.advance(16)
+  focused.length = 0
+  await ui.key({ key: 'x', in: 'review' })
+  await ui.advance(16)
+  expect(focused).toEqual([true])
+  await ui.input({ key: 'keys', text: 'y' })
+  expect(await ui.find({ text: /↳ #1 L2: y$/, in: 'review' })).toBeDefined()
 })
 
 test('comment counts take the Russian plural', () => {
@@ -519,15 +571,11 @@ test('a rendered block counts the rows the renderer draws: a fence without its `
   expect(blockRows(['Первая строка абзаца.', 'Вторая строка.'], 80)).toBe(2) // a break inside a paragraph stays
 })
 
-test('the terminal caret stands on the cursor marker, and after the text of the comment being typed', () => {
+test('the terminal caret stands on the cursor marker', () => {
   const r = startReview(1, REPLY, false)
   const first = caretOf(r, 160, 30) // wide enough that both hint rows take one row
   expect(first.x).toBe(1) // the `▌` cell, inside the padding
   expect(caretOf(setCursor(r, 1), 160, 30)).toEqual({ x: 1, y: first.y + 1 })
-  let typing = step(setCursor(r, 1), 'return')
-  for (const key of ['о', 'к']) typing = step(typing, key)
-  // Under line 2: the box's border and title, then the text; padding, gutter, border and padding to its left.
-  expect(caretOf(typing, 160, 30)).toEqual({ x: 1 + 1 + 7 + 2 + 2, y: first.y + 2 + 2 })
-  expect(caretIn('ab cd', 4)).toEqual({ row: 1, col: 2 }) // `cd` wraps to the next row
-  expect(caretIn('abcd', 4)).toEqual({ row: 1, col: 0 }) // the caret's own cell past the edge
+  const rendered = step(r, 'm')
+  expect(caretOf(step(rendered, 'j'), 160, 30)).toEqual({ x: 1, y: first.y + 3 }) // the paragraph's two lines, the blank one
 })

@@ -37,7 +37,7 @@ A long answer from Claude rarely needs one reply. It needs ten small ones: *this
 
 ## In the browser
 
-Claude Code keeps 24 columns for the conversation however wide the pane gets. When a reply needs more room, press `w`: the same review opens as a web page, set at a comfortable reading width.
+`f` widens the pane as far as Claude Code allows: since Claude Code 2.1.306 a pane docked beside the conversation stays under half the terminal. When a reply needs more room, press `w`: the same review opens as a web page, set at a comfortable reading width.
 
 <img src="assets/web-demo.gif" alt="The review in a browser: dragging across line numbers to comment on a code block, switching to rendered Markdown, copying the prompt" width="100%">
 
@@ -94,14 +94,14 @@ The desktop app does not run `/plugin`. Click **+** next to the prompt box, then
 | `e` / `d` | Edit / delete the comment on the line |
 | `n` / `N` | Next / previous comment |
 | `m` | Switch between source and rendered Markdown |
-| `f` | Full-screen pane and back |
+| `f` | A wider pane, as wide as Claude Code allows, and back |
 | `w` | Open the review in the browser |
 | `s` | Put the comments in the prompt |
 | `q` | Close the review (press twice if it has comments) |
 | `?` | All keys |
 | `Esc` | Back to the prompt. The review stays: `/fb` or a click returns to it |
 
-While you type a comment, `Enter` saves it and `Enter` on an empty comment cancels it.
+A comment is typed in a field of its own, under its line, across the pane. `Enter` saves it, `Enter` on an empty comment cancels it and `⇧Enter` starts a new line; the arrows, `Home`/`End`, a paste and dictation work as in Claude Code's prompt box. Beside the field Claude Code draws its own hint, `⏎ сохранить · shift+⏎ new line`, which a plugin cannot hide. `Esc` goes back to the prompt and leaves the comment open: `/fb` returns to it.
 
 The mouse works as well: a click moves the cursor to a line (a block in rendered view), a second click there opens a comment on it, and a click on a comment opens it for editing. The rendered view estimates its blocks' heights, so far down a long reply a click can land on the next block; the highlight shows which one before you comment.
 
@@ -110,7 +110,7 @@ The mouse works as well: a click moves the cursor to a line (a block in rendered
 
 ## How it works
 
-`inline-notes` is a Claude Code plugin built on function hooks. `/fb` reads the session's replies, opens a pane, and draws the reviewer in it as a `Client` surface module. That module reads keys raw, which is how the Russian layout maps onto the same commands. A zero-height input field holds the keyboard, so no click is needed. It sits on the cursor's `▌` marker, or at the insertion point of a comment being typed, so the terminal's caret never wanders off to a corner. When you press `s`, the comments become one prompt that quotes the numbered lines each comment is about.
+`inline-notes` is a Claude Code plugin built on function hooks. `/fb` reads the session's replies, opens a pane, and draws the reviewer in it as a `Client` surface module. That module reads keys raw, which is how the Russian layout maps onto the same commands. A zero-height input field holds the keyboard, so no click is needed. It sits on the cursor's `▌` marker, so the terminal's caret never wanders off to a corner. While you type a comment, that same field is drawn across the pane under the comment's line, between two parts of the reviewer (Claude Code wraps a field's text to the pane's width, so a narrower box would cut it), so the keyboard never leaves it and the field does the editing itself. A click hands the keyboard to the reviewer, which takes no paste, so the plugin hands it back to the field. When you press `s`, the comments become one prompt that quotes the numbered lines each comment is about.
 
 The review state lives in the session's plugin state, so closing the pane with `Esc` loses nothing.
 

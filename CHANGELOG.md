@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0 — 2026-10-21
+
+- A comment is typed in a real field, under its line across the pane: the arrows, `Home`/`End`, `⇧Enter` for a new line, a paste and dictation work as in Claude Code's prompt box. A paste no longer lands in the prompt box when the comment was opened with a click.
+- A click in the pane hands the keyboard back to the field: the terminal's caret stays on the cursor's marker instead of jumping to the prompt.
+- A key that reaches the reviewer while a comment is typed hands the keyboard back to the field instead of being typed past it.
+- `f` widens the pane only as far as Claude Code allows, and says so: since Claude Code 2.1.306 a docked pane stays under half the terminal, whatever a plugin asks for. The status points to `w`, which opens the review in the browser.
+
 ## 0.7.0 — 2026-10-21
 
 - The mouse works in the rendered view (`m`) as in the source view: a click picks a block, a second click on it opens a comment, a click on a comment edits it. Blocks are found by their estimated heights.

@@ -14,7 +14,7 @@ export type FbReview = {
   nextId: number
   draft: FbDraft | null
   draftText: string
-  /** Caret in draftText, in code points. */
+  /** Caret in draftText, in code points, for a key typed before the comment's field was drawn; the field keeps its own. */
   draftCaret: number
   /** The reply drawn rendered, a block per paragraph, list item, table or fence: the cursor walks blocks. */
   preview: boolean
