@@ -103,7 +103,7 @@ The desktop app does not run `/plugin`. Click **+** next to the prompt box, then
 
 While you type a comment, `Enter` saves it and `Enter` on an empty comment cancels it.
 
-The mouse works in the source view as well: a click moves the cursor to a line, a second click on that line opens a comment on it, and a click on a comment opens it for editing. The rendered view takes keys only.
+The mouse works as well: a click moves the cursor to a line (a block in rendered view), a second click there opens a comment on it, and a click on a comment opens it for editing. The rendered view estimates its blocks' heights, so far down a long reply a click can land on the next block; the highlight shows which one before you comment.
 
 > [!NOTE]
 > The interface text is in Russian. The prompt it builds is in Russian too, so Claude usually answers the comments in Russian.

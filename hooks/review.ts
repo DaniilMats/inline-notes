@@ -139,8 +139,9 @@ export function walkBlocks(r: FbReview, by: number, contentRows: number): FbRevi
   return moveBlock(r, Math.sign(by) * (Math.abs(by) > 1 ? 5 : 1))
 }
 
-export function startEdit(r: FbReview): FbReview {
-  const c = commentsAtCursor(r)[0]
+/** Opens comment `id` for editing (a click on it), or the first at the cursor. */
+export function startEdit(r: FbReview, id?: number): FbReview {
+  const c = id === undefined ? commentsAtCursor(r)[0] : r.comments.find(x => x.id === id)
   if (!c) return { ...r, status: 'На этой строке нет комментария.' }
   return { ...r, draft: { id: c.id, start: c.start, end: c.end }, draftText: c.body, draftCaret: [...c.body].length, armed: null, status: '' }
 }

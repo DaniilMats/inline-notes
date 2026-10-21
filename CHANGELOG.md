@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 — 2026-10-21
+
+- The mouse works in the rendered view (`m`) as in the source view: a click picks a block, a second click on it opens a comment, a click on a comment edits it. Blocks are found by their estimated heights.
+- A click on a comment edits that comment, not the first one on its line or block.
+- A code block counts the rows the renderer draws, without its ``` lines: in the rendered view the caret and clicks no longer slip two rows further with each code block above them.
+
 ## 0.6.1 — 2026-10-21
 
 - The README installs in two steps: add the marketplace, then install the plugin from it.

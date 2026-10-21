@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { fieldKeys, fieldStart, markOf } from '../hooks/field'
-import { caretIn, caretOf, fitTop, measure, rowsOf, tableRows } from '../hooks/layout'
+import { blockRows, caretIn, caretOf, fitTop, headerRows, measure, rowsOf, tableRows } from '../hooks/layout'
 import {
   arm,
   blocksOf,
@@ -11,6 +11,7 @@ import {
   deleteAtCursor,
   handleKey,
   keyName,
+  linesOf,
   saveDraft,
   scrollBy,
   setCursor,
@@ -431,6 +432,41 @@ test('↑ and ↓ off the one-line key field move the cursor and leave the ring 
   expect(await ui.find({ text: /ctrl\+x|c коммент/, in: 'review' })).toBeUndefined() // no click hint, no `c` hint
 })
 
+test('rendered, a click picks a block, a second one comments on it, and one on a comment edits that comment', async ($, on) => {
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: REPLY, toolUses: [] }] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 1 }))
+  await run($, '')
+  const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
+  await ui.resize({ columns: 100, rows: 30, in: 'review' })
+  // The review mirrored, for the header's rows; under it block L1-L2 takes two rows, a blank one, then block L4.
+  let r: FbReview = { ...startReview(1, REPLY, false), preview: true }
+  const header = () => headerRows(r, linesOf(REPLY), 98)
+  const click = (y: number) => ui.pointer({ type: 'down', x: 10, y, button: 'left', in: 'review' })
+  const typed = async (text: string) => {
+    for (const key of [...text, 'return']) await ui.key({ key, in: 'review' })
+  }
+  await ui.key({ key: 'm', in: 'review' })
+  expect(await ui.find({ text: /блок 1\/2/, in: 'review' })).toBeDefined()
+  await click(header() + 2) // the blank row between the blocks
+  expect(await ui.find({ text: /блок 1\/2/, in: 'review' })).toBeDefined()
+  await click(header() + 3)
+  r = setCursor(r, 3)
+  expect(await ui.find({ text: /блок 2\/2/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /Новый комментарий/, in: 'review' })).toBeUndefined() // the first click only moves
+  await click(header() + 3)
+  expect(await ui.find({ text: /Новый комментарий к L4/, in: 'review' })).toBeDefined()
+  await typed('а')
+  r = saveDraft(startAdd(r), 'а')
+  await click(header() + 3)
+  await typed('б')
+  r = saveDraft(startAdd(r), 'б')
+  // Both comments sit a row each under the block; a click on the second edits it, not the first.
+  await click(header() + 5)
+  expect(await ui.find({ text: /Правка #2 к L4/, in: 'review' })).toBeDefined()
+})
+
 test('comment counts take the Russian plural', () => {
   expect([1, 2, 4, 5, 11, 12, 21, 22, 25, 111].map(commentCount)).toEqual([
     '1 комментарий', '2 комментария', '4 комментария', '5 комментариев', '11 комментариев',
@@ -475,6 +511,12 @@ test('a rendered table fits the pane: columns share the width and wrap their wor
   expect(narrow.map(r => r.text).join('\n')).toContain('Объём')
   expect(narrow.length).toBeGreaterThan(7) // the comment wraps
   expect(narrow.at(-1)?.text.startsWith('└')).toBe(true)
+})
+
+test('a rendered block counts the rows the renderer draws: a fence without its ``` lines', () => {
+  expect(blockRows(['```go', 'x := 1', '', 'y := 2', '```'], 80)).toBe(3)
+  expect(blockRows(['```', '```'], 80)).toBe(1)
+  expect(blockRows(['Первая строка абзаца.', 'Вторая строка.'], 80)).toBe(2) // a break inside a paragraph stays
 })
 
 test('the terminal caret stands on the cursor marker, and after the text of the comment being typed', () => {

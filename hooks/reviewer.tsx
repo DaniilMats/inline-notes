@@ -7,7 +7,7 @@
 import type { ClientSurface, RenderElement } from 'claude-code'
 
 import type { FbReview } from '../types'
-import { BLOCK_GUTTER, GUTTER, HINT_GAP, draftRows, headerRows, hintsOf, isTable, measure, rowsOf, tableRows, titleOf, windowOf } from './layout'
+import { BLOCK_GUTTER, GUTTER, HINT_GAP, blockRows, draftRows, headerRows, hintsOf, isTable, measure, rowsOf, tableRows, titleOf, windowOf } from './layout'
 import { blockIndex, blocksOf, commentsAt, currentRange, handleKey, isSelected, lineRef, setCursor, startAdd, startEdit } from './review'
 import type { Outcome } from './review'
 
@@ -162,12 +162,24 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
     </Box>
   )
 
+  // Which source line (and which comment) each drawn row belongs to, for clicks.
+  const hits: Hit[] = Array.from({ length: headerRows(r, lines, inner) }, () => ({ line: -1 }))
+  // A click puts the cursor on a line or block, a second one there comments, one on a comment edits it.
+  const clicks = () =>
+    surface.onPointer(ev => {
+      if (ev.type !== 'down' || ev.button !== 'left') return
+      const from = current()
+      const hit = hits[ev.y]
+      if (!hit || hit.line < 0 || from.review.draft) return
+      const at = setCursor(from.review, hit.line)
+      apply(hit.edit !== undefined ? startEdit(at, hit.edit) : at.cursor === from.review.cursor ? startAdd(at) : at, from)
+    })
+
   if (r.preview) {
     // Rendered: a Markdown per block, drawn as replies are (tables too), from the block
-    // the window starts at. Clicks are not mapped: the blocks' heights are only guessed.
-    // The last block runs past the bottom; unshrunk, the overflow is cut there and not
-    // squeezed out of the draft box above it.
-    surface.onPointer(() => undefined)
+    // the window starts at. The last block runs past the bottom; unshrunk, the overflow
+    // is cut there and not squeezed out of the draft box above it.
+    // ponytail: clicks map by blockHeights' guess, as the caret does: tables exact, prose may land a block off further down; a pressable gutter per block if that misses in practice
     const blocks = blocksOf(r.text)
     const selected = r.anchor === null ? null : currentRange(r)
     const wide = Math.max(10, inner - BLOCK_GUTTER)
@@ -175,36 +187,40 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
     let filled = 0
     for (let i = top; i < blocks.length && filled < viewport; i++) {
       const b = blocks[i]!
+      const source = lines.slice(b.start, b.end + 1)
+      const table = isTable(source) ? tableRows(source, wide) : null
+      const gap = i > top && b.start > blocks[i - 1]!.end + 1
+      const notes = r.comments
+        .filter(c => c.id !== draft?.id && blockIndex(blocks, c.end) === i)
+        .map(c => ({ id: c.id, text: `↳ #${c.id} ${lineRef(c)}: ${c.body}` }))
+      const drafted = !!draft && blockIndex(blocks, draft.end) === i
+      if (gap) hits.push({ line: -1 })
+      for (let k = 0; k < blockRows(source, wide); k++) hits.push({ line: b.start })
+      for (const n of notes) for (let k = 0; k < rowsOf(n.text, wide); k++) hits.push({ line: b.start, edit: n.id })
+      if (drafted) for (let k = 0; k < draftRows(r, wide); k++) hits.push({ line: b.start })
       const isCursor = i === units.at
       const marked = selected !== null && selected.start <= b.start && b.end <= selected.end
       shown.push(
-        <Box flexDirection="column" flexShrink={0} marginTop={i > top && b.start > blocks[i - 1]!.end + 1 ? 1 : 0}>
+        <Box flexDirection="column" flexShrink={0} marginTop={gap ? 1 : 0}>
           <Box flexDirection="row" backgroundColor={isCursor ? props.highlight : undefined}>
             <Box width={BLOCK_GUTTER} flexShrink={0}>
               <Text color={isCursor ? ACCENT : SELECTION}>{isCursor ? '▌' : marked ? '┃' : ' '} </Text>
               {count(r.comments.filter(c => c.start <= b.end && b.start <= c.end).length)}
             </Box>
             <Box width={wide} flexDirection="column">
-              {isTable(lines.slice(b.start, b.end + 1)) ? (
-                tableRows(lines.slice(b.start, b.end + 1), wide).map(row => <Text bold={row.bold}>{row.text}</Text>)
-              ) : (
-                <Markdown text={lines.slice(b.start, b.end + 1).join('\n')} />
-              )}
+              {table ? table.map(row => <Text bold={row.bold}>{row.text}</Text>) : <Markdown text={source.join('\n')} />}
             </Box>
           </Box>
-          {r.comments
-            .filter(c => c.id !== draft?.id && blockIndex(blocks, c.end) === i)
-            .map(c => comment(`↳ #${c.id} ${lineRef(c)}: ${c.body}`, BLOCK_GUTTER, wide))}
-          {draft && blockIndex(blocks, draft.end) === i ? draftBox(BLOCK_GUTTER, wide) : null}
+          {notes.map(n => comment(n.text, BLOCK_GUTTER, wide))}
+          {drafted ? draftBox(BLOCK_GUTTER, wide) : null}
         </Box>,
       )
       filled += units.heights[i] ?? 1
     }
+    clicks()
     return frame(header, shown)
   }
 
-  // Which source line (and which comment) each drawn row belongs to, for clicks.
-  const hits: Hit[] = Array.from({ length: headerRows(r, lines, inner) }, () => ({ line: -1 }))
   const body: RenderElement[] = []
   let used = 0
   for (let i = top; i < lines.length && used < viewport; i++) {
@@ -237,14 +253,6 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
     used += heights[i] ?? 1
   }
 
-  surface.onPointer(ev => {
-    if (ev.type !== 'down' || ev.button !== 'left') return
-    const from = current()
-    const hit = hits[ev.y]
-    if (!hit || hit.line < 0 || from.review.draft) return
-    const at = setCursor(from.review, hit.line)
-    apply(hit.edit !== undefined ? startEdit(at) : hit.line === from.review.cursor ? startAdd(at) : at, from)
-  })
-
+  clicks()
   return frame(header, body)
 }

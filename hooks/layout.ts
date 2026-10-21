@@ -194,6 +194,15 @@ export function tableRows(source: string[], width: number): { text: string; bold
 /** Cells the rendered view's gutter takes: the cursor or selection mark, the comment count. */
 export const BLOCK_GUTTER = 4
 
+const FENCE = /^\s{0,3}(`{3,}|~{3,})/
+
+/**
+ * Rows a rendered block's own text takes at `width`: a table as tableRows draws it, a fence
+ * without its ``` lines (the renderer draws the code alone), the rest as its source wraps.
+ */
+export const blockRows = (source: string[], width: number) =>
+  isTable(source) ? tableRows(source, width).length : rowsOf(source.filter(l => !FENCE.test(l)).join('\n') || ' ', width)
+
 /** Rows the draft box takes under its line or block: two of border, its title, the text. */
 export const draftRows = (r: FbReview, content: number) => 3 + rowsOf(r.draftText || ' ', content - 4)
 
@@ -207,8 +216,7 @@ export function blockHeights(r: FbReview, columns: number): number[] {
   const blocks = blocksOf(r.text)
   const content = Math.max(10, columns - BLOCK_GUTTER)
   return blocks.map((b, i) => {
-    const source = lines.slice(b.start, b.end + 1)
-    let rows = isTable(source) ? tableRows(source, content).length : rowsOf(source.join('\n'), content)
+    let rows = blockRows(lines.slice(b.start, b.end + 1), content)
     if (i > 0 && b.start > blocks[i - 1]!.end + 1) rows++ // the blank line before it
     for (const c of r.comments) {
       if (c.id !== r.draft?.id && blockIndex(blocks, c.end) === i) rows += rowsOf(`↳ #${c.id} ${lineRef(c)}: ${c.body}`, content)
@@ -323,8 +331,7 @@ export function caretOf(r: FbReview, columns: number, rows: number): { x: number
     k <= top ? 0 : units.heights.slice(top, k).reduce((a, b) => a + b, 0) - blank(top) + blank(k)
   if (!draft) return at(1, header + startOf(units.at))
   const k = blockIndex(blocks, draft.end)
-  const source = lines.slice(blocks[k]!.start, blocks[k]!.end + 1)
-  const drawn = isTable(source) ? tableRows(source, wide).length : rowsOf(source.join('\n'), wide)
+  const drawn = blockRows(lines.slice(blocks[k]!.start, blocks[k]!.end + 1), wide)
   const y = header + startOf(k) + drawn + commentRows(end => blockIndex(blocks, end) === k, wide)
   return typed(BLOCK_GUTTER, wide, y)
 }
