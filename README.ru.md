@@ -51,13 +51,14 @@
 
 ## Установка
 
-В поле ввода Claude Code в терминале:
+В поле ввода Claude Code в терминале сначала добавьте маркетплейс, затем установите из него плагин:
 
 ```
-/plugin install inline-notes --marketplace DaniilMats/inline-notes
+/plugin marketplace add DaniilMats/inline-notes
+/plugin install inline-notes@inline-notes
 ```
 
-Ответьте `y` на добавление маркетплейса, затем нажмите Enter: плагин включится в пользовательской области, то есть во всех сессиях. Работает сразу.
+Нажмите Enter: плагин включится в пользовательской области, то есть во всех сессиях. Работает сразу.
 
 <details>
 <summary>Из shell или в desktop-приложении</summary>
@@ -65,7 +66,8 @@
 Из shell:
 
 ```
-claude plugin install inline-notes --marketplace DaniilMats/inline-notes
+claude plugin marketplace add DaniilMats/inline-notes
+claude plugin install inline-notes@inline-notes
 ```
 
 В desktop-приложении `/plugin` не работает. Нажмите **+** рядом с полем ввода, затем **Plugins** → **Add marketplace**, введите `DaniilMats/inline-notes` и нажмите **Add plugin**.
@@ -100,6 +102,8 @@ claude plugin install inline-notes --marketplace DaniilMats/inline-notes
 | `Esc` | Вернуться в поле ввода. Ревью остаётся: `/fb` или клик возвращают к нему |
 
 В комментарии `Enter` сохраняет текст, а `Enter` в пустом комментарии отменяет его.
+
+В исходнике работает и мышь: клик ставит курсор на строку, второй клик по той же строке открывает комментарий к ней, а клик по комментарию открывает его на правку. В рендере — только клавиши.
 
 ## Как это устроено
 

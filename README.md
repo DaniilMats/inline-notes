@@ -51,13 +51,14 @@ The page follows your Claude Code theme. It opens from a terminal session (`open
 
 ## Install
 
-At the prompt of a Claude Code terminal session:
+At the prompt of a Claude Code terminal session, add the marketplace first, then install the plugin from it:
 
 ```
-/plugin install inline-notes --marketplace DaniilMats/inline-notes
+/plugin marketplace add DaniilMats/inline-notes
+/plugin install inline-notes@inline-notes
 ```
 
-Answer `y` to add the marketplace, then press Enter to take the user scope, which turns the plugin on for every session. It is active right away.
+Press Enter to take the user scope, which turns the plugin on for every session. It is active right away.
 
 <details>
 <summary>From a shell, or in the desktop app</summary>
@@ -65,7 +66,8 @@ Answer `y` to add the marketplace, then press Enter to take the user scope, whic
 From a shell:
 
 ```
-claude plugin install inline-notes --marketplace DaniilMats/inline-notes
+claude plugin marketplace add DaniilMats/inline-notes
+claude plugin install inline-notes@inline-notes
 ```
 
 The desktop app does not run `/plugin`. Click **+** next to the prompt box, then **Plugins** → **Add marketplace**, enter `DaniilMats/inline-notes`, and click **Add plugin**.
@@ -100,6 +102,8 @@ The desktop app does not run `/plugin`. Click **+** next to the prompt box, then
 | `Esc` | Back to the prompt. The review stays: `/fb` or a click returns to it |
 
 While you type a comment, `Enter` saves it and `Enter` on an empty comment cancels it.
+
+The mouse works in the source view as well: a click moves the cursor to a line, a second click on that line opens a comment on it, and a click on a comment opens it for editing. The rendered view takes keys only.
 
 > [!NOTE]
 > The interface text is in Russian. The prompt it builds is in Russian too, so Claude usually answers the comments in Russian.
