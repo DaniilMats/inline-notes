@@ -23,8 +23,8 @@ A long answer from Claude rarely needs one reply. It needs ten small ones: *this
 
 ## Features
 
-- **Line and range comments.** Put a comment on any line, or select a range with `v` first.
-- **Two views.** Source lines with numbers, or the reply rendered as Markdown (`m`) with tables and code blocks, where the cursor moves by block.
+- **Block, line and range comments.** Put a comment on a block of the rendered reply or on any line of its source, or select a range with `v` first.
+- **Two views.** The reply opens rendered as Markdown, with tables and code blocks, where the cursor moves by block. `m` switches to the source lines with numbers, and back.
 - **A page in the browser.** `w` opens the review in your browser at full width, set in a reading typeface. Comment by a click or a drag across the line numbers; **Скопировать промпт** (copy prompt) puts the same prompt on the clipboard.
 - **One prompt back.** `s` turns every comment, with the lines it quotes, into one prompt in the input box. Review it, paste a screenshot if you want, then press Enter. `/fb --send` skips that step.
 - **Keyboard first.** Keys reach the pane right after `/fb`, with no click needed. `j`/`k` and the arrows move, `Enter` comments. Keys also work on the Russian (ЙЦУКЕН) layout.
@@ -106,7 +106,11 @@ A comment is typed in a field of its own, under its line, across the pane. `Ente
 The mouse works as well: a click moves the cursor to a line (a block in rendered view), a second click there opens a comment on it, and a click on a comment opens it for editing. The rendered view estimates its blocks' heights, so far down a long reply a click can land on the next block; the highlight shows which one before you comment.
 
 > [!NOTE]
-> The interface text is in Russian. The prompt it builds is in Russian too, so Claude usually answers the comments in Russian.
+> The pane, the browser page and the prompt they build are in Russian unless you [switch them to English](#language); Claude usually answers in the prompt's language.
+
+### Language
+
+Everything is in Russian by default. For English, open `/config`, find **Language** among the inline-notes settings and pick `en`: the plugin reloads, and the pane, its help, the browser page and the prompt switch to English. A review already open takes the new language on the next `/fb`. The keys work on the Russian layout in either language.
 
 ## How it works
 
@@ -125,7 +129,7 @@ claude plugin test ./inline-notes       # the test suite
 claude plugin validate ./inline-notes   # manifests and hooks, as the engine reads them
 ```
 
-The reviewer logic is pure state transitions in [`hooks/review.ts`](hooks/review.ts), and layout arithmetic lives in [`hooks/layout.ts`](hooks/layout.ts). Both are covered by [`tests/fb.test.ts`](tests/fb.test.ts). The browser page is one self-contained file, [`web/review.html`](web/review.html).
+The reviewer logic is pure state transitions in [`hooks/review.ts`](hooks/review.ts), and layout arithmetic lives in [`hooks/layout.ts`](hooks/layout.ts). Both are covered by [`tests/fb.test.ts`](tests/fb.test.ts). Messages are written in Russian and go through [`hooks/i18n.ts`](hooks/i18n.ts), which holds their English; a message it lacks fails `tsc`. The browser page is one self-contained file, [`web/review.html`](web/review.html), with each of its words in both languages.
 
 ## Credits
 

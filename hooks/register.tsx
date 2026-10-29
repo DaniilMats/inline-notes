@@ -11,8 +11,10 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 import type { FbReview } from '../types'
 import { GENERATIONS, fieldKeys, fieldStart, markOf } from './field'
 import type { Field } from './field'
-import { SUBMIT, caretOf, fieldColumns, fieldRows, windowOf } from './layout'
-import { blocksOf, buildPrompt, commentCount, draftKeyOf, handleKey, lineRef, linesOf, saveDraft, scrollBy, startReview, walkBlocks } from './review'
+import { commentCount, tr } from './i18n'
+import type { Language } from './i18n'
+import { caretOf, fieldColumns, fieldRows, submitOf, windowOf } from './layout'
+import { blocksOf, buildPrompt, draftKeyOf, handleKey, lineRef, linesOf, promptWords, saveDraft, scrollBy, setCursor, startReview, walkBlocks } from './review'
 import type { Outcome } from './review'
 
 const PANE = 'fb'
@@ -54,6 +56,11 @@ let region = { columns: 0, rows: 0 }
 // overwrites typing; another comment, another seed.
 // ponytail: module state; after a reload the field is seeded from the review, which holds what was typed
 let seed = { key: '', text: '' }
+// The `language` option, for what is said with no review in hand; a review carries its own
+// (FbReview.lang), which the reviewer reads in its own module. register sets it, and a change
+// of the options reloads the plugin, which runs register again.
+// ponytail: module state; register runs at every load, so it is never stale
+let language: Language = 'ru'
 
 type Message = { type: 'sync'; review: FbReview; focus?: boolean } | { type: 'finish'; outcome: Outcome; review: FbReview }
 
@@ -124,7 +131,8 @@ async function openWeb($: EngineInterface, r: FbReview) {
       blocks: blocksOf(r.text),
       comments: r.comments,
       nextId: r.nextId,
-      intro: buildPrompt({ ...r, comments: [] }), // the page appends its comments as buildPrompt does
+      ...promptWords(r), // the page appends its comments to the intro as buildPrompt does
+      lang: r.lang ?? 'ru',
       preview: r.preview,
     }
     // A function, so a `$&` in the reply is not read as a pattern; `<` escaped, so a `</script>` in it stays data.
@@ -136,9 +144,9 @@ async function openWeb($: EngineInterface, r: FbReview) {
       .run(['open', path])
       .catch(() => $.process.run(['xdg-open', path]))
       .then(run => run.exitCode === 0, () => false)
-    status = shown ? 'Ревью открыто в браузере: там «Скопировать промпт», затем вставьте сюда.' : `Браузер не открылся: откройте ${path}`
+    status = shown ? tr(r.lang, 'Ревью открыто в браузере: там «Скопировать промпт», затем вставьте сюда.') : tr(r.lang, 'Браузер не открылся: откройте %s', path)
   } catch (error) {
-    status = `Не удалось открыть в браузере: ${error instanceof Error ? error.message : String(error)}`
+    status = tr(r.lang, 'Не удалось открыть в браузере: %s', error instanceof Error ? error.message : String(error))
   }
   await update($, review, cur => (cur ? bump(cur, { status }) : cur))
 }
@@ -148,14 +156,14 @@ async function finish($: EngineInterface, outcome: Outcome, r: FbReview) {
   if (outcome === 'web') return openWeb($, r)
   if (outcome === 'cancel') {
     await close($)
-    $.ui.toast('Ревью отменено.')
+    $.ui.toast(tr(r.lang, 'Ревью отменено.'))
     return
   }
   const prompt = buildPrompt(r)
   let failure: string | undefined
   let appended = false
   if (r.send) {
-    const sent = await $.prompt.submit({ text: prompt, asUser: true }).catch(() => ({ drop: 'не удалось отправить' }))
+    const sent = await $.prompt.submit({ text: prompt, asUser: true }).catch(() => ({ drop: tr(r.lang, 'не удалось отправить') }))
     if ('drop' in sent) failure = sent.drop
   } else {
     const box = await $.prompt.read().catch(() => ({ text: '' }))
@@ -163,17 +171,19 @@ async function finish($: EngineInterface, outcome: Outcome, r: FbReview) {
     const filled = await $.prompt
       .fill(appended ? { text: `\n\n${prompt}`, mode: 'append' } : { text: prompt })
       .catch(() => ({ isFilled: false as const }))
-    if (!filled.isFilled) failure = 'поле ввода недоступно (открыт диалог?)'
+    if (!filled.isFilled) failure = tr(r.lang, 'поле ввода недоступно (открыт диалог?)')
   }
   if (failure !== undefined) {
-    await update($, review, cur => (cur ? bump(cur, { armed: null, status: `Не отправлено: ${failure}. Комментарии на месте.` }) : cur))
+    await update($, review, cur => (cur ? bump(cur, { armed: null, status: tr(r.lang, 'Не отправлено: %s. Комментарии на месте.', failure) }) : cur))
     return
   }
   await close($)
   $.ui.toast(
     r.send
-      ? `Отправлено комментариев: ${r.comments.length}.`
-      : `${commentCount(r.comments.length)} в поле ввода${appended ? ' после вашего текста' : ''}: проверьте, при желании вставьте скриншот, и Enter.`,
+      ? tr(r.lang, 'Отправлено комментариев: %d.', r.comments.length)
+      : appended
+        ? tr(r.lang, '%s в поле ввода после вашего текста: проверьте, при желании вставьте скриншот, и Enter.', commentCount(r.comments.length, r.lang))
+        : tr(r.lang, '%s в поле ввода: проверьте, при желании вставьте скриншот, и Enter.', commentCount(r.comments.length, r.lang)),
   )
 }
 
@@ -223,13 +233,22 @@ async function runKeys($: EngineInterface, keys: string[]) {
   await follow($, prev, next)
 }
 
-export const register: Register = on => {
+// What /fb says once the pane is open: the keys of the view it shows.
+const opened = (r: FbReview, again = false) => {
+  const keys = r.preview ? tr(r.lang, 'j/k — блоки, m — исходник') : tr(r.lang, 'j/k — строки, m — рендер')
+  return again
+    ? tr(r.lang, 'Ревью ответа #%d снова открыто: %s, Enter — комментарий, s — в промпт, ? — все клавиши.', r.index, keys)
+    : tr(r.lang, 'Ревью ответа #%d открыто: %s, Enter — комментарий, s — в промпт, ? — все клавиши.', r.index, keys)
+}
+
+export const register: Register = (on, options) => {
+  language = options.language === 'en' ? 'en' : 'ru'
   let announced = 0
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'fb',
-      description: 'Построчные комментарии к ответу Claude: /fb — последний ответ, /fb N — ответ N; --send отправляет сразу',
+      description: tr(language, 'Построчные комментарии к ответу Claude: /fb — последний ответ, /fb N — ответ N; --send отправляет сразу'),
       argumentHint: '[N] [--send]',
     })
     announced = (await replies($)).length // history is never announced retroactively
@@ -252,28 +271,36 @@ export const register: Register = on => {
     screen = { ...screen, columns: e.presentation.columns }
     const open = await read($, review)
     if (open && ref === undefined && !send) {
-      await openPane($, open)
-      return { text: `Ревью ответа #${open.index} снова открыто: j/k — строки, Enter — комментарий, s — в промпт, ? — все клавиши.` }
+      // A review opened before a change of the language takes the new one.
+      const now = (open.lang ?? 'ru') === language ? open : bump(open, { lang: language })
+      if (now !== open) await update($, review, () => now)
+      await openPane($, now)
+      return { text: opened(now, true) }
     }
     if (open && open.comments.length > 0) {
       return {
-        text: `Ревью ответа #${open.index} открыто, в нём ${commentCount(open.comments.length)}: сначала s (в промпт) или q (закрыть); /fb без аргументов возвращает к нему.`,
+        text: tr(
+          language,
+          'Ревью ответа #%d открыто, в нём %s: сначала s (в промпт) или q (закрыть); /fb без аргументов возвращает к нему.',
+          open.index,
+          commentCount(open.comments.length, language),
+        ),
       }
     }
 
     const list = await replies($)
-    if (list.length === 0) return { text: 'В сессии ещё нет ответов с текстом.' }
+    if (list.length === 0) return { text: tr(language, 'В сессии ещё нет ответов с текстом.') }
     const index = ref === undefined || ref === 'last' ? list.length : Number(ref)
     const text = list[index - 1]
     if (!Number.isInteger(index) || text === undefined) {
-      return { text: `Нет ответа #${ref}: номера от 1 до ${list.length} (их показывает строка ↳ /fb N после ответа).` }
+      return { text: tr(language, 'Нет ответа #%s: номера от 1 до %d (их показывает строка ↳ /fb N после ответа).', String(ref), list.length) }
     }
-    const opened = await $.clock.now()
-    const started = startReview(index, text, send, opened)
+    // A reply is Markdown: it opens rendered, m shows the source.
+    const started = setCursor({ ...startReview(index, text, send, await $.clock.now()), preview: true, lang: language }, 0)
     await update($, review, () => started)
     await openPane($, started)
 
-    return { text: `Ревью ответа #${index} открыто: j/k — строки, Enter — комментарий, s — в промпт, ? — все клавиши.` }
+    return { text: opened(started) }
   })
 
   on('ui.message', { requestId: PANE }, async ($, e, next) => {
@@ -318,12 +345,12 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     if (e.surface !== 'terminal' && e.surface !== 'desktop') {
       const { Text } = $.ui.resolve(e)
-      return <Text dimColor>Ревью /fb работает в терминале и desktop.</Text>
+      return <Text dimColor>{tr(language, 'Ревью /fb работает в терминале и desktop.')}</Text>
     }
     const { Box, Button, Client, Input, Text } = $.ui.resolve(e)
     if (e.viewport) screen = { columns: Math.max(screen.columns, e.viewport.columns), rows: e.viewport.rows }
     const r = await read($, review)
-    if (!r) return <Text dimColor>Нет открытого ревью: /fb</Text>
+    if (!r) return <Text dimColor>{tr(language, 'Нет открытого ревью: /fb')}</Text>
     drawnGen = genOf(await read($, mark))
 
     region = { columns: e.props.bodyColumns, rows: Math.max(8, e.props.scroll.bodyRows) }
@@ -334,7 +361,7 @@ export const register: Register = on => {
     if (seed.key !== at) seed = { key: at, text: r.draftText }
     // The engine wraps a field's text to the whole body less its Enter hint, so the comment's
     // field spans the body: framed by rules above and below, not a box's sides, which would cut it.
-    const title = draft ? `── ${draft.id === undefined ? 'Новый комментарий' : `Правка #${draft.id}`} к ${lineRef(draft)} ` : ''
+    const title = draft ? `── ${draft.id === undefined ? tr(r.lang, 'Новый комментарий к %s', lineRef(draft)) : tr(r.lang, 'Правка #%d к %s', draft.id, lineRef(draft))} ` : ''
     const rule = (head: string) => head + '─'.repeat(Math.max(0, region.columns - [...head].length))
 
     const field = (
@@ -342,7 +369,7 @@ export const register: Register = on => {
         key="keys"
         autoFocus
         value={draft ? seed.text : markOf(drawnGen)}
-        {...(draft ? { rows: fieldRows(r, fieldColumns(region.columns)), submitLabel: SUBMIT } : {})}
+        {...(draft ? { rows: fieldRows(r, fieldColumns(region.columns, r.lang)), submitLabel: submitOf(r.lang) } : {})}
         onInput={async (value: string) => {
           if (draft) return typeDraft($, value)
           const got = fieldKeys(typing, drawnGen, value)

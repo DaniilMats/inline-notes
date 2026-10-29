@@ -31,6 +31,8 @@ export type FbReview = {
   help?: boolean
   /** The first line or block the window was last fitted from: the reviewer and the hooks fit it alike. */
   top?: number
+  /** The language the review speaks, the `language` option; Russian when unset, as in reviews saved before it. */
+  lang?: 'ru' | 'en'
 }
 
 declare module 'claude-code' {

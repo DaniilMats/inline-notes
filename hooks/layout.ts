@@ -1,19 +1,37 @@
 // Row arithmetic and the header text for the reviewer, kept free of JSX so tests can drive it.
 import type { FbReview } from '../types'
+import { tr } from './i18n'
+import type { Language } from './i18n'
 import { blockIndex, blocksOf, currentRange, lineRef, linesOf } from './review'
 
 /** A hint: the key, drawn bold, and what it does. */
 export type Hint = [string, string]
 
-const HINTS: Hint[] = [
-  ['j/k', 'строка'], ['v', 'выделить'], ['Enter', 'коммент'], ['m', 'рендер'], ['f', 'шире'],
-  ['w', 'браузер'], ['s', 'в промпт'], ['q', 'отмена'], ['?', 'все клавиши'],
-]
-const DRAFT_HINTS: Hint[] = [['Enter', 'сохранить'], ['⇧Enter', 'новая строка'], ['пустой Enter', 'отмена']]
-const PREVIEW_HINTS: Hint[] = [
-  ['j/k', 'блок'], ['v', 'выделить'], ['Enter', 'коммент'], ['m', 'исходник'], ['f', 'шире'],
-  ['w', 'браузер'], ['s', 'в промпт'], ['q', 'отмена'], ['?', 'все клавиши'],
-]
+// The hint rows by language: the source view's, a comment's, the rendered view's.
+const HINTS: Record<Language, { source: Hint[]; draft: Hint[]; rendered: Hint[] }> = {
+  ru: {
+    source: [
+      ['j/k', 'строка'], ['v', 'выделить'], ['Enter', 'коммент'], ['m', 'рендер'], ['f', 'шире'],
+      ['w', 'браузер'], ['s', 'в промпт'], ['q', 'отмена'], ['?', 'все клавиши'],
+    ],
+    draft: [['Enter', 'сохранить'], ['⇧Enter', 'новая строка'], ['пустой Enter', 'отмена']],
+    rendered: [
+      ['j/k', 'блок'], ['v', 'выделить'], ['Enter', 'коммент'], ['m', 'исходник'], ['f', 'шире'],
+      ['w', 'браузер'], ['s', 'в промпт'], ['q', 'отмена'], ['?', 'все клавиши'],
+    ],
+  },
+  en: {
+    source: [
+      ['j/k', 'line'], ['v', 'select'], ['Enter', 'comment'], ['m', 'render'], ['f', 'wider'],
+      ['w', 'browser'], ['s', 'to prompt'], ['q', 'cancel'], ['?', 'all keys'],
+    ],
+    draft: [['Enter', 'save'], ['⇧Enter', 'new line'], ['empty Enter', 'cancel']],
+    rendered: [
+      ['j/k', 'block'], ['v', 'select'], ['Enter', 'comment'], ['m', 'source'], ['f', 'wider'],
+      ['w', 'browser'], ['s', 'to prompt'], ['q', 'cancel'], ['?', 'all keys'],
+    ],
+  },
+}
 export const HINT_GAP = ' · '
 
 const snippet = (lines: string[]) => {
@@ -25,17 +43,17 @@ export function titleOf(r: FbReview, lines: string[]) {
   const blocks = blocksOf(r.text)
   const parts = [
     r.preview
-      ? `блок ${blockIndex(blocks, r.cursor) + 1}/${blocks.length} (${lineRef(currentRange({ ...r, anchor: null }))})`
-      : `строка ${r.cursor + 1}/${lines.length}`,
+      ? tr(r.lang, 'блок %d/%d (%s)', blockIndex(blocks, r.cursor) + 1, blocks.length, lineRef(currentRange({ ...r, anchor: null })))
+      : tr(r.lang, 'строка %d/%d', r.cursor + 1, lines.length),
   ]
-  if (r.anchor !== null) parts.push(`выделение ${lineRef(currentRange(r))}`)
-  parts.push(`комментариев: ${r.comments.length}`)
+  if (r.anchor !== null) parts.push(tr(r.lang, 'выделение %s', lineRef(currentRange(r))))
+  parts.push(tr(r.lang, 'комментариев: %d', r.comments.length))
   if (r.send) parts.push('--send')
 
-  return { head: `feedback · ответ #${r.index} «${snippet(lines)}»`, tail: ` · ${parts.join(' · ')}` }
+  return { head: tr(r.lang, 'feedback · ответ #%d «%s»', r.index, snippet(lines)), tail: ` · ${parts.join(' · ')}` }
 }
 
-export const hintsOf = (r: FbReview) => (r.draft ? DRAFT_HINTS : r.preview ? PREVIEW_HINTS : HINTS)
+export const hintsOf = (r: FbReview) => HINTS[r.lang ?? 'ru'][r.draft ? 'draft' : r.preview ? 'rendered' : 'source']
 
 /** The hint row as plain text: what rowsOf counts. */
 export const hintOf = (r: FbReview) => hintsOf(r).map(([key, what]) => `${key} ${what}`).join(HINT_GAP)
@@ -204,24 +222,25 @@ export const blockRows = (source: string[], width: number) =>
   isTable(source) ? tableRows(source, width).length : rowsOf(source.filter(l => !FENCE.test(l)).join('\n') || ' ', width)
 
 /** What Enter does in the comment's field: the engine draws it beside the field. */
-export const SUBMIT = 'сохранить'
-// A focused field's Enter hint as the engine draws it after the text, never hidden: the
-// whole, or its first half where the whole would leave the text under half the body.
-const SAVE = ` ⏎ ${SUBMIT}`
-const SAVE_LONG = `${SAVE} · shift+⏎ new line`
+export const submitOf = (lang?: Language) => tr(lang, 'сохранить')
 
 /**
  * Cells the comment's text wraps at in a pane body `columns` wide: the engine sizes a field
  * to the body less its hint, so a field drawn narrower than the body cuts its text.
  */
-export const fieldColumns = (columns: number) =>
-  Math.max(12, columns - [...(columns - [...SAVE_LONG].length >= columns / 2 ? SAVE_LONG : SAVE)].length)
+export const fieldColumns = (columns: number, lang?: Language) => {
+  // A focused field's Enter hint as the engine draws it after the text, never hidden: the
+  // whole, or its first half where the whole would leave the text under half the body.
+  const save = ` ⏎ ${submitOf(lang)}`
+  const whole = `${save} · shift+⏎ new line`
+  return Math.max(12, columns - [...(columns - [...whole].length >= columns / 2 ? whole : save)].length)
+}
 
 /** Rows the comment's field is drawn: its text, and one to type on. */
 export const fieldRows = (r: FbReview, width: number) => rowsOf(r.draftText || ' ', width) + 1
 
 /** Rows the comment takes under its line or block: its title rule, the field across the body (`inner` + 2), a closing rule. */
-export const draftRows = (r: FbReview, inner: number) => 2 + fieldRows(r, fieldColumns(inner + 2))
+export const draftRows = (r: FbReview, inner: number) => 2 + fieldRows(r, fieldColumns(inner + 2, r.lang))
 
 /**
  * Rows each rendered block is guessed to take, its comments and draft included.

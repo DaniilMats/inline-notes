@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0 — 2026-10-29
+
+- `/fb` opens the reply rendered as Markdown, a block per paragraph, list item, table or code block; `m` switches to the numbered source lines, as before.
+- Everything can be in English: **Language** in `/config` (`language`, `ru` by default) switches the pane, its help and hints, the messages of `/fb`, the browser page and the prompt that `s` and the page build. The keys still work on the Russian layout.
+
 ## 0.8.0 — 2026-10-21
 
 - A comment is typed in a real field, under its line across the pane: the arrows, `Home`/`End`, `⇧Enter` for a new line, a paste and dictation work as in Claude Code's prompt box. A paste no longer lands in the prompt box when the comment was opened with a click.

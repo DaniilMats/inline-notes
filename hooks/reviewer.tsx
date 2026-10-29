@@ -9,6 +9,8 @@
 import type { ClientSurface, RenderElement } from 'claude-code'
 
 import type { FbReview } from '../types'
+import { tr } from './i18n'
+import type { Language } from './i18n'
 import { BLOCK_GUTTER, GUTTER, HINT_GAP, blockRows, headerRows, hintsOf, isTable, measure, rowsOf, tableRows, titleOf, windowOf } from './layout'
 import { blockIndex, blocksOf, commentsAt, currentRange, handleKey, isSelected, lineRef, setCursor, startAdd, startEdit } from './review'
 import type { Outcome } from './review'
@@ -26,24 +28,45 @@ const ACCENT = 'claude'
 const COMMENT = 'warning'
 const SELECTION = 'suggestion'
 
-const HELP: [string, string][] = [
-  ['j / k, ↑ / ↓ (о / л)', 'строка вниз / вверх; в рендере — блок'],
-  ['g / G, Home / End (п / П)', 'в начало / в конец'],
-  ['ctrl+d / ctrl+u, PgDn / PgUp', 'страница вниз / вверх'],
-  ['v (м)', 'начать или снять выделение диапазона'],
-  ['Enter, клик по строке с курсором', 'комментарий к строке или диапазону'],
-  ['e (у), клик по комментарию', 'править комментарий'],
-  ['d (в)', 'удалить комментарий на строке'],
-  ['n / N (т / Т)', 'следующий / предыдущий комментарий'],
-  ['m (ь)', 'отрисованный markdown: таблицы как в ответе, курсор и комментарии — по блокам (абзац, пункт, таблица, код)'],
-  ['f (а)', 'панель шире и обратно: насколько даёт Claude Code, с 2.1.306 — до половины экрана'],
-  ['w (ц)', 'ревью в браузере: строки во всю ширину, комментарии мышью; «Скопировать промпт» — и вставить сюда'],
-  ['s (ы)', 'собрать комментарии в поле ввода; с --send — отправить сразу, двойным нажатием'],
-  ['q (й)', 'закрыть ревью; с комментариями — двойным нажатием'],
-  ['Esc', 'вернуться в поле ввода Claude; панель и комментарии остаются, /fb или клик возвращают'],
-  ['скриншот', 'в панель не вставить; после s промпт в обычном поле ввода — вставьте туда перед Enter'],
-  ['в поле комментария', 'Enter сохраняет, пустой Enter отменяет, ⇧Enter — новая строка; стрелки, Home/End, вставка и голосовой ввод — как в поле ввода Claude'],
-]
+// The key table by language; the Russian names the same keys on the ЙЦУКЕН layout in brackets.
+const HELP: Record<Language, [string, string][]> = {
+  ru: [
+    ['j / k, ↑ / ↓ (о / л)', 'строка вниз / вверх; в рендере — блок'],
+    ['g / G, Home / End (п / П)', 'в начало / в конец'],
+    ['ctrl+d / ctrl+u, PgDn / PgUp', 'страница вниз / вверх'],
+    ['v (м)', 'начать или снять выделение диапазона'],
+    ['Enter, клик по строке с курсором', 'комментарий к строке или диапазону'],
+    ['e (у), клик по комментарию', 'править комментарий'],
+    ['d (в)', 'удалить комментарий на строке'],
+    ['n / N (т / Т)', 'следующий / предыдущий комментарий'],
+    ['m (ь)', 'исходник или отрисованный markdown (открывается он): таблицы как в ответе, курсор и комментарии — по блокам (абзац, пункт, таблица, код)'],
+    ['f (а)', 'панель шире и обратно: насколько даёт Claude Code, с 2.1.306 — до половины экрана'],
+    ['w (ц)', 'ревью в браузере: строки во всю ширину, комментарии мышью; «Скопировать промпт» — и вставить сюда'],
+    ['s (ы)', 'собрать комментарии в поле ввода; с --send — отправить сразу, двойным нажатием'],
+    ['q (й)', 'закрыть ревью; с комментариями — двойным нажатием'],
+    ['Esc', 'вернуться в поле ввода Claude; панель и комментарии остаются, /fb или клик возвращают'],
+    ['скриншот', 'в панель не вставить; после s промпт в обычном поле ввода — вставьте туда перед Enter'],
+    ['в поле комментария', 'Enter сохраняет, пустой Enter отменяет, ⇧Enter — новая строка; стрелки, Home/End, вставка и голосовой ввод — как в поле ввода Claude'],
+  ],
+  en: [
+    ['j / k, ↑ / ↓', 'line down / up; a block when rendered'],
+    ['g / G, Home / End', 'top / bottom'],
+    ['ctrl+d / ctrl+u, PgDn / PgUp', 'page down / up'],
+    ['v', 'start or clear a range selection'],
+    ["Enter, a click on the cursor's line", 'comment on the line or range'],
+    ['e, a click on a comment', 'edit the comment'],
+    ['d', 'delete the comment on the line'],
+    ['n / N', 'next / previous comment'],
+    ['m', 'source or rendered Markdown (it opens rendered): tables as in the reply, the cursor and comments take blocks (a paragraph, list item, table, code)'],
+    ['f', 'a wider pane and back: as wide as Claude Code allows, since 2.1.306 under half the screen'],
+    ['w', 'the review in the browser: lines at full width, comments by mouse; “Copy prompt”, then paste it here'],
+    ['s', 'put the comments in the prompt box; with --send, send them at once on a second press'],
+    ['q', 'close the review; with comments, press twice'],
+    ['Esc', "back to Claude's prompt box; the pane and comments stay, /fb or a click returns"],
+    ['screenshot', 'cannot be pasted into the pane; after s the prompt is in the usual prompt box: paste it there before Enter'],
+    ["in a comment's field", "Enter saves, an empty Enter cancels, ⇧Enter starts a new line; the arrows, Home/End, paste and dictation work as in Claude's prompt box"],
+  ],
+}
 
 // Reviews saved by earlier versions lack the newer fields.
 const normalize = (r: FbReview): FbReview => ({
@@ -116,11 +139,12 @@ export default function Reviewer(props: Props, surface: ClientSurface<State>): R
     return frame(
       <>
         <Text>
-          <Text bold>feedback · клавиши</Text> (в скобках — русская раскладка; любая клавиша закрывает)
+          <Text bold>{tr(r.lang, 'feedback · клавиши')}</Text>
+          {tr(r.lang, ' (в скобках — русская раскладка; любая клавиша закрывает)')}
         </Text>
         <Text> </Text>
       </>,
-      HELP.map(([keys, what]) => (
+      HELP[r.lang ?? 'ru'].map(([keys, what]) => (
         <Box flexDirection="row">
           <Box width={Math.min(42, Math.floor(inner / 2))} flexShrink={0}>
             <Text color={ACCENT}>{keys}</Text>

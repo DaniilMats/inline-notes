@@ -1,5 +1,8 @@
 // The /fb reviewer as pure state transitions, ported from the pi /fb reviewer.
 import type { FbComment, FbReview } from '../types'
+import { commentCount, tr } from './i18n'
+
+export { commentCount } from './i18n'
 
 // Split once per reply: every cursor move and every draw asks for the same lines.
 let split: { text: string; lines: string[] } | undefined
@@ -111,15 +114,15 @@ export function moveBlock(r: FbReview, by: number): FbReview {
 
 export function toggleSelection(r: FbReview): FbReview {
   return r.anchor === null
-    ? { ...r, anchor: r.cursor, armed: null, status: `Выделение с L${r.cursor + 1}: двигайте курсор, затем c/Enter. v снимает.` }
-    : { ...r, anchor: null, armed: null, status: 'Выделение снято.' }
+    ? { ...r, anchor: r.cursor, armed: null, status: tr(r.lang, 'Выделение с L%d: двигайте курсор, затем c/Enter. v снимает.', r.cursor + 1) }
+    : { ...r, anchor: null, armed: null, status: tr(r.lang, 'Выделение снято.') }
 }
 
 export function startAdd(r: FbReview): FbReview {
   const range = currentRange(r)
   // A blank line is easy to land on by accident; say so before the comment is typed.
   const blank = linesOf(r.text).slice(range.start, range.end + 1).every(line => line.trim() === '')
-  const status = blank ? `${lineRef(range)} — пустая строка: в промпт она уйдёт как «∅».` : ''
+  const status = blank ? tr(r.lang, '%s — пустая строка: в промпт она уйдёт как «∅».', lineRef(range)) : ''
 
   return { ...r, draft: range, draftText: '', draftCaret: 0, armed: null, status }
 }
@@ -142,7 +145,7 @@ export function walkBlocks(r: FbReview, by: number, contentRows: number): FbRevi
 /** Opens comment `id` for editing (a click on it), or the first at the cursor. */
 export function startEdit(r: FbReview, id?: number): FbReview {
   const c = id === undefined ? commentsAtCursor(r)[0] : r.comments.find(x => x.id === id)
-  if (!c) return { ...r, status: 'На этой строке нет комментария.' }
+  if (!c) return { ...r, status: tr(r.lang, 'На этой строке нет комментария.') }
   return { ...r, draft: { id: c.id, start: c.start, end: c.end }, draftText: c.body, draftCaret: [...c.body].length, armed: null, status: '' }
 }
 
@@ -153,24 +156,24 @@ export function saveDraft(r: FbReview, value: string): FbReview {
   const draft = r.draft
   if (!draft) return r
   const body = value.trim()
-  if (body === '') return { ...r, draft: null, draftText: '', draftCaret: 0, status: 'Пустой комментарий отброшен.' }
+  if (body === '') return { ...r, draft: null, draftText: '', draftCaret: 0, status: tr(r.lang, 'Пустой комментарий отброшен.') }
   if (draft.id !== undefined) {
     const comments = r.comments.map(c => (c.id === draft.id ? { ...c, body } : c))
-    return { ...r, comments, draft: null, draftText: '', draftCaret: 0, anchor: null, status: `#${draft.id} изменён.` }
+    return { ...r, comments, draft: null, draftText: '', draftCaret: 0, anchor: null, status: tr(r.lang, '#%d изменён.', draft.id) }
   }
   const added: FbComment = { id: r.nextId, start: draft.start, end: draft.end, body }
   const comments = [...r.comments, added].sort((a, b) => a.start - b.start || a.end - b.end || a.id - b.id)
-  return { ...r, comments, nextId: r.nextId + 1, draft: null, draftText: '', draftCaret: 0, anchor: null, status: `#${added.id} добавлен на ${lineRef(added)}.` }
+  return { ...r, comments, nextId: r.nextId + 1, draft: null, draftText: '', draftCaret: 0, anchor: null, status: tr(r.lang, '#%d добавлен на %s.', added.id, lineRef(added)) }
 }
 
 export function deleteAtCursor(r: FbReview): FbReview {
   const c = commentsAtCursor(r)[0]
-  if (!c) return { ...r, status: 'На этой строке нет комментария.' }
-  return { ...r, comments: r.comments.filter(x => x.id !== c.id), armed: null, status: `#${c.id} удалён.` }
+  if (!c) return { ...r, status: tr(r.lang, 'На этой строке нет комментария.') }
+  return { ...r, comments: r.comments.filter(x => x.id !== c.id), armed: null, status: tr(r.lang, '#%d удалён.', c.id) }
 }
 
 export function jumpNext(r: FbReview): FbReview {
-  if (r.comments.length === 0) return { ...r, status: 'Комментариев пока нет.' }
+  if (r.comments.length === 0) return { ...r, status: tr(r.lang, 'Комментариев пока нет.') }
   // Past the cursor's block when rendered: a comment inside it would snap back to it.
   const after = currentRange({ ...r, anchor: null }).end
   const target = r.comments.find(c => c.start > (r.preview ? after : r.cursor)) ?? r.comments[0]!
@@ -178,51 +181,51 @@ export function jumpNext(r: FbReview): FbReview {
 }
 
 export function jumpPrev(r: FbReview): FbReview {
-  if (r.comments.length === 0) return { ...r, status: 'Комментариев пока нет.' }
+  if (r.comments.length === 0) return { ...r, status: tr(r.lang, 'Комментариев пока нет.') }
   const target = [...r.comments].reverse().find(c => c.start < r.cursor) ?? r.comments.at(-1)!
   return { ...setCursor(r, target.start), status: `#${target.id} ${lineRef(target)}.` }
 }
 
 /** s and q act on the second press: one stray key never sends or drops the review. */
 export function arm(r: FbReview, what: 'submit' | 'cancel'): FbReview | 'submit' | 'cancel' {
-  if (what === 'submit' && r.comments.length === 0) return { ...r, status: 'Нечего отправлять: комментариев нет.' }
+  if (what === 'submit' && r.comments.length === 0) return { ...r, status: tr(r.lang, 'Нечего отправлять: комментариев нет.') }
   if (what === 'cancel' && r.comments.length === 0) return 'cancel'
   if (what === 'submit' && !r.send) return 'submit'
   if (r.armed === what) return what
   const status =
     what === 'submit'
-      ? 'Нажмите s ещё раз, чтобы отправить сразу (--send).'
-      : `Нажмите q ещё раз, чтобы выбросить ${commentCount(r.comments.length)}.`
+      ? tr(r.lang, 'Нажмите s ещё раз, чтобы отправить сразу (--send).')
+      : tr(r.lang, 'Нажмите q ещё раз, чтобы выбросить %s.', commentCount(r.comments.length, r.lang))
   return { ...r, armed: what, status }
 }
 
-/** `1 комментарий`, `3 комментария`, `5 комментариев`. */
-export function commentCount(n: number): string {
-  const tens = n % 100
-  const ones = n % 10
-  const form = tens >= 11 && tens <= 14 ? 'комментариев' : ones === 1 ? 'комментарий' : ones >= 2 && ones <= 4 ? 'комментария' : 'комментариев'
-
-  return `${n} ${form}`
-}
-
-function quoted(lines: string[], start: number, end: number, max = 12): string {
+function quoted(r: FbReview, lines: string[], start: number, end: number, max = 12): string {
   const picked = lines.slice(start, end + 1)
   const out = picked.slice(0, max).map((line, i) => `> ${start + i + 1}: ${line || '∅'}`)
-  if (picked.length > max) out.push(`> … ещё ${picked.length - max} строк(и)`)
+  if (picked.length > max) out.push(`> ${tr(r.lang, '… ещё %d строк(и)', picked.length - max)}`)
   return out.join('\n')
 }
+
+/** What the page (w) needs to build the prompt as buildPrompt does: its words for `r`'s language. */
+export const promptWords = (r: FbReview) => ({
+  intro: buildPrompt({ ...r, comments: [] }),
+  comment: tr(r.lang, 'Комментарий:'),
+  more: tr(r.lang, '… ещё %d строк(и)', '%d'),
+})
 
 export function buildPrompt(r: FbReview): string {
   const lines = linesOf(r.text)
   const blocks = r.comments
-    .map((c, i) => [`${i + 1}. ${lineRef(c)}`, quoted(lines, c.start, c.end), 'Комментарий:', c.body].join('\n'))
+    .map((c, i) => [`${i + 1}. ${lineRef(c)}`, quoted(r, lines, c.start, c.end), tr(r.lang, 'Комментарий:'), c.body].join('\n'))
     .join('\n\n')
 
-  return `У меня есть inline-комментарии к твоему ответу #${r.index}.
+  const intro = tr(
+    r.lang,
+    'У меня есть inline-комментарии к твоему ответу #%d.\n\nПожалуйста, обработай их одним ответом: пройди по каждому пункту, объясни что меняешь/уточняешь, и если уместно — дай обновлённую версию ответа. Не игнорируй ни один комментарий.',
+    r.index,
+  )
 
-Пожалуйста, обработай их одним ответом: пройди по каждому пункту, объясни что меняешь/уточняешь, и если уместно — дай обновлённую версию ответа. Не игнорируй ни один комментарий.
-
-${blocks}`
+  return `${intro}\n\n${blocks}`
 }
 
 // The same physical keys on the Russian ЙЦУКЕН layout: о is j, л is k, П is G.
@@ -298,9 +301,6 @@ export function editDraft(r: FbReview, ev: { key: string; ctrl?: true; shift?: t
 /** What a key asks of the hooks: fill the prompt, drop the review, or open it in the browser (which keeps it). */
 export type Outcome = 'submit' | 'cancel' | 'web'
 
-// f asks for the whole screen; a docked pane gets what Claude Code grants, since 2.1.306 under half of it.
-const WIDE = 'Панель шире, насколько даёт Claude Code. Мало места — w откроет ревью в браузере.'
-
 /** One key against the review: the next state, or the review's outcome. */
 export function handleKey(
   r: FbReview,
@@ -329,7 +329,8 @@ export function handleKey(
     case 'n': return jumpNext(r)
     case 'N': return jumpPrev(r)
     case 'm': return setCursor({ ...r, preview: !r.preview }, r.cursor)
-    case 'f': return { ...r, wide: !r.wide, status: r.wide ? '' : WIDE }
+    // f asks for the whole screen; a docked pane gets what Claude Code grants, since 2.1.306 under half of it.
+    case 'f': return { ...r, wide: !r.wide, status: r.wide ? '' : tr(r.lang, 'Панель шире, насколько даёт Claude Code. Мало места — w откроет ревью в браузере.') }
     case 'w': return 'web'
     case 's': return arm(r, 'submit')
     case 'q': return arm(r, 'cancel')

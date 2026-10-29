@@ -1,11 +1,20 @@
 {
   "name": "inline-notes",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "/fb: comment on any line of a Claude reply in a review pane or a browser page, like a pull request, and send every comment back in one prompt",
   "author": { "name": "Daniil Matsyutsya", "url": "https://github.com/DaniilMats" },
   "homepage": "https://github.com/DaniilMats/inline-notes",
   "repository": "https://github.com/DaniilMats/inline-notes",
   "license": "MIT",
   "keywords": ["review", "feedback", "comments", "inline", "fb"],
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "The language of the review pane, the browser page and the prompt s builds: ru (Russian) or en (English). Claude usually answers in the prompt's language.",
+      "default": "ru",
+      "options": ["ru", "en"]
+    }
+  },
   "types": "./types/index.d.ts"
 }

@@ -2,7 +2,8 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { fieldKeys, fieldStart, markOf } from '../hooks/field'
-import { blockRows, caretOf, fieldColumns, fitTop, headerRows, measure, rowsOf, tableRows } from '../hooks/layout'
+import { ENGLISH } from '../hooks/i18n'
+import { blockRows, caretOf, fieldColumns, fitTop, headerRows, hintOf, measure, rowsOf, tableRows, titleOf } from '../hooks/layout'
 import {
   arm,
   blocksOf,
@@ -39,6 +40,97 @@ test('a range comment quotes its numbered lines in the prompt', () => {
   const prompt = buildPrompt(r)
   expect(prompt).toContain('ответу #3')
   expect(prompt).toContain('1. L1-L2\n> 1: Флаки есть, но их не видно.\n> 2: Поход в базу один.\nКомментарий:\nпочему один?')
+})
+
+const EN_REPLY = 'First paragraph line.\nSecond line.\n\nThird paragraph.'
+const CYRILLIC = /[а-яё]/i
+
+test('every English phrase is English and takes the arguments its Russian does', () => {
+  for (const [ru, en] of Object.entries(ENGLISH)) {
+    expect(CYRILLIC.test(en)).toBe(false)
+    expect(en.match(/%[ds]/g)?.length ?? 0).toBe(ru.match(/%[ds]/g)?.length ?? 0)
+  }
+})
+
+test('English: the prompt, the statuses, the header and the hints', () => {
+  const long = `${'line\n'.repeat(14)}last`
+  const r = saveDraft(startAdd(setCursor(toggleSelection({ ...startReview(3, long, false), lang: 'en' }), 14)), 'why?')
+  expect(r.status).toBe('#1 added on L1-L15.')
+  const prompt = buildPrompt(r)
+  expect(prompt.startsWith('I have inline comments on your reply #3.\n\n')).toBe(true)
+  expect(prompt).toContain('> 12: line\n> … 3 more line(s)\nComment:\nwhy?')
+  expect(CYRILLIC.test(prompt)).toBe(false)
+  expect(buildPrompt({ ...r, lang: undefined })).toContain('> … ещё 3 строк(и)\nКомментарий:\nwhy?') // Russian when unset
+
+  const fresh: FbReview = { ...startReview(1, EN_REPLY, true), lang: 'en' }
+  const said: string[] = []
+  const look = (x: FbReview) => {
+    const { head, tail } = titleOf(x, linesOf(x.text))
+    said.push(x.status, head, tail, hintOf(x))
+    return x
+  }
+  let x = look(fresh)
+  for (const key of ['v', 'v', 'e', 'd', 'n', 'N', 's', 'f', 'm', 'j', 'f']) x = look(step(x, key))
+  x = look(step(look(step(x, 'c')), 'return')) // a draft, then an empty one dropped
+  x = look(saveDraft(startAdd(setCursor(x, 3)), 'x'))
+  for (const key of ['s', 'q']) x = look(step(x, key)) // armed, both
+  look(saveDraft(startEdit(x), 'y'))
+  look(deleteAtCursor(x))
+  look(startAdd(setCursor({ ...fresh, preview: false }, 2))) // the blank-line warning
+  expect(said.filter(t => CYRILLIC.test(t))).toEqual([])
+  expect(said).toContain('Press q again to discard 1 comment.')
+  expect(said).toContain('L3 is a blank line: the prompt will quote it as “∅”.')
+  expect(fieldColumns(100, 'en')).toBe(74) // ` ⏎ save · shift+⏎ new line` beside it
+  expect(commentCount(2, 'en')).toBe('2 comments')
+})
+
+test('language en: the pane, its help, the comment box and the prompt speak English', { options: { language: 'en' } }, async ($, on) => {
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: EN_REPLY, toolUses: [] }] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 1 }))
+  on('prompt.read', () => ({ value: { text: '', cursor: 0 } }))
+  let filled = ''
+  on('prompt.fill', (_, e) => {
+    filled = e.text
+    return { isFilled: true }
+  })
+  expect((await run($, '')).text).toBe('Review of reply #1 is open: j/k blocks, m source, Enter comments, s to prompt, ? all keys.')
+  const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
+  // The reviewer's region (the Client) and the rest of the pane are searched apart.
+  const russian = async () => (await ui.find({ text: CYRILLIC, in: 'review' })) ?? (await ui.find({ text: CYRILLIC }))
+  expect(await ui.find({ text: /block 1\/2/, in: 'review' })).toBeDefined()
+  expect(await russian()).toBeUndefined()
+  await ui.key({ key: '?', in: 'review' })
+  expect(await ui.find({ text: /feedback · keys/, in: 'review' })).toBeDefined()
+  expect(await russian()).toBeUndefined()
+  await ui.key({ key: 'j', in: 'review' }) // closes the help
+  await ui.key({ key: 'c', in: 'review' }) // rendered: the first paragraph
+  expect(await ui.find({ text: /New comment on L1-L2/ })).toBeDefined()
+  expect((await ui.find({ type: 'Input', key: 'keys' }))!.props.submitLabel).toBe('save')
+  expect(await russian()).toBeUndefined()
+  await ui.input({ key: 'keys', text: 'why one?' })
+  expect(await ui.find({ text: /#1 added on L1-L2\./, in: 'review' })).toBeDefined()
+  expect(await russian()).toBeUndefined()
+  await ui.key({ key: 's', in: 'review' })
+  expect(filled).toBe('I have inline comments on your reply #1.\n\nPlease address them in one reply: go through each point, explain what you change or clarify, and where it helps, give an updated version of the reply. Do not skip any comment.\n\n1. L1-L2\n> 1: First paragraph line.\n> 2: Second line.\nComment:\nwhy one?')
+})
+
+test('a review opened before the language changed takes the new one on /fb', { options: { language: 'en' } }, async ($, on) => {
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: EN_REPLY, toolUses: [] }] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 1 }))
+  // The first read of the review finds one opened while the plugin spoke Russian.
+  let stale = true
+  on('state.get', (_, e, next) => {
+    if (e.key !== 'review' || !stale) return next(e)
+    stale = false
+    return { value: { value: { ...startReview(1, EN_REPLY, false), preview: true, lang: 'ru' }, version: 1 } }
+  })
+  expect((await run($, '')).text).toBe('Review of reply #1 is open again: j/k blocks, m source, Enter comments, s to prompt, ? all keys.')
+  const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
+  expect(await ui.find({ text: /block 1\/2/, in: 'review' })).toBeDefined()
 })
 
 test('edit, delete, empty drafts and the blank-line warning', () => {
@@ -175,8 +267,9 @@ test('f asks the pane for the whole screen, says Claude Code may grant less, and
   await ui.input({ key: 'keys', text: '\u200bf', kind: 'change' })
   expect(opens.at(-1)).toEqual({ columns: undefined, rows: undefined })
   expect(await ui.find({ text: /насколько даёт/, in: 'review' })).toBeUndefined()
-  await ui.input({ key: 'keys', text: '\u2060m', kind: 'change' }) // rendered: a block per Markdown
-  expect(await ui.find({ text: /блок 1\/6 \(L1\)/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /блок 1\/6 \(L1\)/, in: 'review' })).toBeDefined() // /fb opens rendered: a block per Markdown
+  await ui.input({ key: 'keys', text: '\u2060m', kind: 'change' })
+  expect(await ui.find({ text: /строка 1\/16/, in: 'review' })).toBeDefined() // m: the source
 })
 
 test('w writes the review as a page, the reply kept as data, and opens it in the browser', async ($, on) => {
@@ -200,6 +293,7 @@ test('w writes the review as a page, the reply kept as data, and opens it in the
 
   await run($, '')
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
+  await ui.key({ key: 'm', in: 'review' }) // the source: a comment on the first line alone
   await ui.key({ key: 'c', in: 'review' })
   await ui.input({ key: 'keys', text: 'x' }) // Enter in the comment's field saves it
   await ui.key({ key: 'ц', in: 'review' }) // w on the Russian layout
@@ -210,9 +304,11 @@ test('w writes the review as a page, the reply kept as data, and opens it in the
   const data = JSON.parse(html.slice(html.indexOf('>') + 1, html.lastIndexOf('</script>')))
   expect(data.lines).toEqual(['цена $& и </script><b>x</b>', 'вторая'])
   expect(data.comments).toEqual([{ id: 1, start: 0, end: 0, body: 'x' }])
-  // The page appends each comment as buildPrompt does: the intro is the prompt with none.
+  // The page appends each comment as buildPrompt does: the intro is the prompt with none, and the words are its.
   const r = saveDraft(startAdd(startReview(1, reply, false)), 'x')
-  expect(`${data.intro}1. L1\n> 1: ${data.lines[0]}\nКомментарий:\nx`).toBe(buildPrompt(r))
+  expect(`${data.intro}1. L1\n> 1: ${data.lines[0]}\n${data.comment}\nx`).toBe(buildPrompt(r))
+  expect(data.more).toBe('… ещё %d строк(и)')
+  expect(data.lang).toBe('ru')
   expect(await ui.find({ text: /Ревью открыто в браузере/, in: 'review' })).toBeDefined()
 })
 
@@ -236,7 +332,7 @@ test('w from the key field, where /fb leaves the keys, opens the page and the ke
   expect(runs).toEqual([['open', '/tmp/inline-notes-1.html']]) // no TMPDIR: /tmp
   await ui.input({ key: 'keys', text: '\u2060цj', kind: 'change' })
   expect(runs).toHaveLength(1)
-  expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /блок 2\/2/, in: 'review' })).toBeDefined()
 })
 
 test("rendered: the Client walks blocks with the arrows, and a comment's field sits under its block", async ($, on) => {
@@ -246,7 +342,6 @@ test("rendered: the Client walks blocks with the arrows, and a comment's field s
   on('clock.now', () => ({ value: 1 }))
   await run($, '')
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
-  await ui.key({ key: 'ь', in: 'review' }) // m
   for (let i = 0; i < 5; i++) await ui.key({ key: 'down', in: 'review' })
   expect(await ui.find({ text: /блок 6\/6/, in: 'review' })).toBeDefined()
   await ui.key({ key: 'up', in: 'review' })
@@ -322,6 +417,7 @@ test('/fb in the pane: Russian keys drive the Client, s fills the prompt', async
   expect((await run($, '')).text).toContain('#2')
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
   expect(await ui.find({ text: 'Поход в базу один.', in: 'review' })).toBeDefined()
+  await ui.key({ key: 'ь', in: 'review' }) // m: the source
   await ui.key({ key: 'о', in: 'review' }) // j
   await ui.key({ key: 'с', in: 'review' }) // c
   await ui.input({ key: 'keys', text: 'ручка ?' })
@@ -357,7 +453,7 @@ test('a refused prompt keeps the review; a busy box gets the comments appended',
   await ui.key({ key: 's', in: 'review' })
   expect(closed).toBe(0)
   expect(await ui.find({ text: /Не отправлено: поле ввода недоступно/, in: 'review' })).toBeDefined()
-  expect(await ui.find({ text: /↳ #1 L1: x/, in: 'review' })).toBeDefined() // the comment survived
+  expect(await ui.find({ text: /↳ #1 L1-L2: x/, in: 'review' })).toBeDefined() // the comment, on the first paragraph, survived
   refuse = false
   await ui.key({ key: 's', in: 'review' })
   expect(closed).toBe(1)
@@ -380,7 +476,7 @@ test('the key field drives the review without a click; Enter there opens a comme
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
   const type = (text: string) => ui.input({ key: 'keys', text, kind: 'change' })
   // The field holds an invisible mark of generation 0; each handled change draws the next generation.
-  await type(markOf(0) + 'о') // j
+  await type(markOf(0) + 'mо') // m, the source, then j: one change
   expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
   await type(markOf(1) + 'jj') // the swap reached the field: typed afresh
   expect(await ui.find({ text: /строка 4\/4/, in: 'review' })).toBeDefined()
@@ -420,9 +516,9 @@ test('a mark left by an older version (a string) still draws the pane and reads 
   })
   await run($, '')
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
-  expect(await ui.find({ text: /строка 1\/4/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /блок 1\/2/, in: 'review' })).toBeDefined()
   await ui.input({ key: 'keys', text: markOf(0) + 'j', kind: 'change' })
-  expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /блок 2\/2/, in: 'review' })).toBeDefined()
 })
 
 test('↑ and ↓ off the one-line key field move the cursor and leave the ring on the field', async ($, on) => {
@@ -441,12 +537,12 @@ test('↑ and ↓ off the one-line key field move the cursor and leave the ring 
   const arrow = (element: string) =>
     $.ui.focus({ requestId: 'fb', key: element, component: 'Pane', element, origin: { kind: 'person' } } as Parameters<typeof $.ui.focus>[0])
   expect((await arrow('arrow-down')).deny).toBeDefined()
-  await arrow('arrow-down')
+  await arrow('arrow-down') // rendered: past the last block it stays there
   await ui.redraw()
-  expect(await ui.find({ text: /строка 3\/4/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /блок 2\/2/, in: 'review' })).toBeDefined()
   await arrow('arrow-up')
   await ui.redraw()
-  expect(await ui.find({ text: /строка 2\/4/, in: 'review' })).toBeDefined()
+  expect(await ui.find({ text: /блок 1\/2/, in: 'review' })).toBeDefined()
   expect(moved).toBe(0) // the ring stayed on the field
   expect(await ui.find({ text: /ctrl\+x|c коммент/, in: 'review' })).toBeUndefined() // no click hint, no `c` hint
 })
@@ -464,7 +560,6 @@ test('rendered, a click picks a block, a second one comments on it, and one on a
   const header = () => headerRows(r, linesOf(REPLY), 98)
   const click = (y: number) => ui.pointer({ type: 'down', x: 10, y, button: 'left', in: 'review' })
   const typed = (text: string) => ui.input({ key: 'keys', text }) // typed into the comment's field, then Enter
-  await ui.key({ key: 'm', in: 'review' })
   expect(await ui.find({ text: /блок 1\/2/, in: 'review' })).toBeDefined()
   await click(header() + 2) // the blank row between the blocks
   expect(await ui.find({ text: /блок 1\/2/, in: 'review' })).toBeDefined()
@@ -502,6 +597,8 @@ test('a click hands the keyboard back to the field, and a key that reaches the r
   await run($, '')
   const ui = await $.ui.mount({ plugin: 'inline-notes', surface: 'terminal', component: 'Pane', requestId: 'fb', props: PANE_PROPS, viewport: { columns: 100, rows: 30 } })
   await ui.resize({ columns: 100, rows: 30, in: 'review' })
+  await ui.key({ key: 'm', in: 'review' }) // the source: a click picks a line
+  await ui.advance(16)
   const header = headerRows(startReview(1, REPLY, false), linesOf(REPLY), 98)
   focused.length = 0
   await ui.pointer({ type: 'down', x: 10, y: header + 1, button: 'left', in: 'review' })
@@ -520,7 +617,7 @@ test('a click hands the keyboard back to the field, and a key that reaches the r
 })
 
 test('comment counts take the Russian plural', () => {
-  expect([1, 2, 4, 5, 11, 12, 21, 22, 25, 111].map(commentCount)).toEqual([
+  expect([1, 2, 4, 5, 11, 12, 21, 22, 25, 111].map(n => commentCount(n))).toEqual([
     '1 комментарий', '2 комментария', '4 комментария', '5 комментариев', '11 комментариев',
     '12 комментариев', '21 комментарий', '22 комментария', '25 комментариев', '111 комментариев',
   ])

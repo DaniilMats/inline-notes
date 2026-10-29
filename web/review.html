@@ -5,7 +5,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ревью ответа · inline-notes</title>
+<title>inline-notes</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -181,14 +181,14 @@
 <header class="bar">
   <div class="wrap">
     <div class="id">
-      <h1>Ответ <span id="num"></span></h1>
+      <h1><span data-en="Reply">Ответ</span> <span id="num"></span></h1>
       <span class="meta" id="meta"></span>
     </div>
-    <div class="seg" role="group" aria-label="Вид ответа">
-      <button type="button" id="as-source" aria-pressed="true">Исходник</button>
-      <button type="button" id="as-rendered" aria-pressed="false">Рендер</button>
+    <div class="seg" role="group" aria-label="Вид ответа" data-en-label="Reply view">
+      <button type="button" id="as-source" aria-pressed="true" data-en="Source">Исходник</button>
+      <button type="button" id="as-rendered" aria-pressed="false" data-en="Rendered">Рендер</button>
     </div>
-    <button type="button" class="ghost" id="help" aria-label="Клавиши">?</button>
+    <button type="button" class="ghost" id="help" aria-label="Клавиши" data-en-label="Keys">?</button>
   </div>
 </header>
 
@@ -200,27 +200,27 @@
     <div class="composer" id="composer">
       <span class="caret" aria-hidden="true">❯</span>
       <span class="line" id="line" aria-live="polite"></span>
-      <button type="button" class="ghost" id="show">Показать промпт</button>
-      <button type="button" class="btn" id="copy">Скопировать промпт</button>
+      <button type="button" class="ghost" id="show" data-en="Show prompt">Показать промпт</button>
+      <button type="button" class="btn" id="copy" data-en="Copy prompt">Скопировать промпт</button>
     </div>
   </div>
 </footer>
 
 <dialog id="keys" aria-labelledby="keys-title">
-  <h2 id="keys-title">Клавиши</h2>
+  <h2 id="keys-title" data-en="Keys">Клавиши</h2>
   <dl>
-    <dt>j / k, ↓ / ↑</dt><dd>строка вниз / вверх; в рендере — блок</dd>
-    <dt>g / G, Home / End</dt><dd>в начало / в конец</dd>
-    <dt>v</dt><dd>начать или снять выделение диапазона</dd>
-    <dt>Enter</dt><dd>комментарий к строке или диапазону</dd>
-    <dt>клик, протяжка</dt><dd>по номерам строк — то же, мышью</dd>
-    <dt>e / d</dt><dd>изменить / удалить комментарий на строке</dd>
-    <dt>n / N</dt><dd>следующий / предыдущий комментарий</dd>
-    <dt>m</dt><dd>исходник или отрисованный markdown</dd>
-    <dt>s</dt><dd>скопировать промпт со всеми комментариями</dd>
-    <dt>Esc</dt><dd>снять выделение, закрыть комментарий</dd>
+    <dt>j / k, ↓ / ↑</dt><dd data-en="line down / up; a block when rendered">строка вниз / вверх; в рендере — блок</dd>
+    <dt>g / G, Home / End</dt><dd data-en="top / bottom">в начало / в конец</dd>
+    <dt>v</dt><dd data-en="start or clear a range selection">начать или снять выделение диапазона</dd>
+    <dt>Enter</dt><dd data-en="comment on the line or range">комментарий к строке или диапазону</dd>
+    <dt data-en="click, drag">клик, протяжка</dt><dd data-en="on the line numbers: the same, by mouse">по номерам строк — то же, мышью</dd>
+    <dt>e / d</dt><dd data-en="edit / delete the comment on the line">изменить / удалить комментарий на строке</dd>
+    <dt>n / N</dt><dd data-en="next / previous comment">следующий / предыдущий комментарий</dd>
+    <dt>m</dt><dd data-en="source or rendered Markdown">исходник или отрисованный markdown</dd>
+    <dt>s</dt><dd data-en="copy the prompt with every comment">скопировать промпт со всеми комментариями</dd>
+    <dt>Esc</dt><dd data-en="clear the selection, close the comment">снять выделение, закрыть комментарий</dd>
   </dl>
-  <p>Клавиши работают и на русской раскладке. Комментарии хранятся в этом браузере и переживают перезагрузку.</p>
+  <p data-en="The keys work on the Russian layout too. Comments are kept in this browser and survive a reload.">Клавиши работают и на русской раскладке. Комментарии хранятся в этом браузере и переживают перезагрузку.</p>
 </dialog>
 
 <script type="application/json" id="fb-data">"__FB_DATA__"</script>
@@ -229,30 +229,42 @@
 (() => {
   const data = JSON.parse(document.getElementById('fb-data').textContent)
   if (typeof data !== 'object' || data === null) {
-    document.body.innerHTML = '<p class="empty">Эту страницу открывает /fb в Claude Code: откройте ревью и нажмите w.</p>'
+    // No data, no language: both.
+    document.body.innerHTML = '<p class="empty">Эту страницу открывает /fb в Claude Code: откройте ревью и нажмите w. · This page is opened by /fb in Claude Code: open a review and press w.</p>'
     return
   }
-  const { lines, blocks, intro, index } = data
+  const { lines, blocks, intro, comment, more, index } = data
   const $ = id => document.getElementById(id)
   const sheet = $('sheet')
 
+  // The language the pane speaks: each message is written in both, the HTML's words swapped from their data-en twins.
+  const english = data.lang === 'en'
+  const T = (ru, en) => (english ? en : ru)
+  if (english) {
+    document.documentElement.lang = 'en'
+    for (const el of document.querySelectorAll('[data-en]')) el.textContent = el.dataset.en
+    for (const el of document.querySelectorAll('[data-en-label]')) el.setAttribute('aria-label', el.dataset.enLabel)
+  }
+
   const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
-  const plural = (n, one, few, many) => {
+  // `n` and its noun: three Russian forms, then the English singular and plural.
+  const plural = (n, one, few, many, enOne, enMany) => {
+    if (english) return `${n} ${n === 1 ? enOne : enMany}`
     const tens = n % 100, ones = n % 10
     return `${n} ${tens >= 11 && tens <= 14 ? many : ones === 1 ? one : ones >= 2 && ones <= 4 ? few : many}`
   }
-  const commentCount = n => plural(n, 'комментарий', 'комментария', 'комментариев')
+  const commentCount = n => plural(n, 'комментарий', 'комментария', 'комментариев', 'comment', 'comments')
 
-  // As hooks/review.ts quotes and numbers them: the prompt is the one s builds in the pane.
+  // As hooks/review.ts quotes and numbers them, in the words it hands over: the prompt is the one s builds in the pane.
   const ref = c => (c.start === c.end ? `L${c.start + 1}` : `L${c.start + 1}-L${c.end + 1}`)
   const quoted = (start, end, max = 12) => {
     const picked = lines.slice(start, end + 1)
     const out = picked.slice(0, max).map((line, i) => `> ${start + i + 1}: ${line || '∅'}`)
-    if (picked.length > max) out.push(`> … ещё ${picked.length - max} строк(и)`)
+    if (picked.length > max) out.push(`> ${more.replace('%d', String(picked.length - max))}`)
     return out.join('\n')
   }
   const promptOf = () =>
-    intro + comments.map((c, i) => [`${i + 1}. ${ref(c)}`, quoted(c.start, c.end), 'Комментарий:', c.body].join('\n')).join('\n\n')
+    intro + comments.map((c, i) => [`${i + 1}. ${ref(c)}`, quoted(c.start, c.end), comment, c.body].join('\n')).join('\n\n')
 
   // The browser's own copy of the comments: a reload keeps them. Keyed by the review and its
   // next id, so a second w after new comments in the pane starts from the pane's.
@@ -340,17 +352,17 @@
 
   const noteHtml = c => `
     <article class="note" data-id="${c.id}">
-      <header><span>#${c.id} · ${ref(c)}</span><span class="acts"><button type="button" data-act="edit">Изменить</button><button type="button" data-act="del">Удалить</button></span></header>
+      <header><span>#${c.id} · ${ref(c)}</span><span class="acts"><button type="button" data-act="edit">${T('Изменить', 'Edit')}</button><button type="button" data-act="del">${T('Удалить', 'Delete')}</button></span></header>
       <p>${esc(c.body)}</p>
     </article>`
   const draftHtml = d => `
     <section class="draft">
-      <header>${d.id === undefined ? 'Новый комментарий' : `Правка #${d.id}`} · ${ref(d)}</header>
-      <textarea rows="2" aria-label="Комментарий к ${ref(d)}" placeholder="Что здесь поправить или уточнить?"></textarea>
+      <header>${d.id === undefined ? T('Новый комментарий', 'New comment') : T(`Правка #${d.id}`, `Editing #${d.id}`)} · ${ref(d)}</header>
+      <textarea rows="2" aria-label="${T('Комментарий к', 'Comment on')} ${ref(d)}" placeholder="${T('Что здесь поправить или уточнить?', 'What to fix or clarify here?')}"></textarea>
       <footer>
-        <span class="hint">Enter — сохранить, Shift+Enter — новая строка, Esc — отмена</span>
-        <button type="button" class="ghost" data-act="cancel">Отмена</button>
-        <button type="button" class="btn" data-act="save">Сохранить</button>
+        <span class="hint">${T('Enter — сохранить, Shift+Enter — новая строка, Esc — отмена', 'Enter saves, Shift+Enter starts a new line, Esc cancels')}</span>
+        <button type="button" class="ghost" data-act="cancel">${T('Отмена', 'Cancel')}</button>
+        <button type="button" class="btn" data-act="save">${T('Сохранить', 'Save')}</button>
       </footer>
     </section>`
 
@@ -374,7 +386,7 @@
       }
       out.push(`
         <div class="${cls}" data-start="${u.start}" data-end="${u.end}">
-          <div class="gut" title="Комментарий к ${ref(u)}">${n === 0 ? '' : `<span class="c" title="${commentCount(n)}"></span>`}<span class="n">${st.rendered ? `L${u.start + 1}` : i + 1}</span></div>
+          <div class="gut" title="${T('Комментарий к', 'Comment on')} ${ref(u)}">${n === 0 ? '' : `<span class="c" title="${commentCount(n)}"></span>`}<span class="n">${st.rendered ? `L${u.start + 1}` : i + 1}</span></div>
           ${body}
         </div>`)
       for (const c of comments) if (c.id !== st.draft?.id && unitOf(c.end) === i) out.push(noteHtml(c))
@@ -404,7 +416,8 @@
     }
     $('as-source').setAttribute('aria-pressed', String(!st.rendered))
     $('as-rendered').setAttribute('aria-pressed', String(st.rendered))
-    $('meta').textContent = `${st.rendered ? plural(blocks.length, 'блок', 'блока', 'блоков') : plural(lines.length, 'строка', 'строки', 'строк')} · ${commentCount(comments.length)}`
+    const size = st.rendered ? plural(blocks.length, 'блок', 'блока', 'блоков', 'block', 'blocks') : plural(lines.length, 'строка', 'строки', 'строк', 'line', 'lines')
+    $('meta').textContent = `${size} · ${commentCount(comments.length)}`
   }
   const showCursor = () => sheet.querySelector('.row.is-cursor')?.scrollIntoView({ block: 'nearest' })
 
@@ -420,10 +433,10 @@
       line.className = 'line dim'
       said = setTimeout(() => dock(), 7000)
     } else if (comments.length) {
-      line.textContent = `${commentCount(comments.length)} к ответу #${index}`
+      line.textContent = `${commentCount(comments.length)} ${T('к ответу', 'on reply')} #${index}`
       line.className = 'line'
     } else {
-      line.textContent = 'Нажмите на номер строки или протяните по номерам, чтобы оставить комментарий.'
+      line.textContent = T('Нажмите на номер строки или протяните по номерам, чтобы оставить комментарий.', 'Click a line number, or drag across several, to comment.')
       line.className = 'line dim'
     }
   }
@@ -477,7 +490,7 @@
     return touching(start, end)[0]
   }
   function jumpNote(dir) {
-    if (comments.length === 0) return dock('Комментариев пока нет.')
+    if (comments.length === 0) return dock(T('Комментариев пока нет.', 'No comments yet.'))
     const after = rangeNow(null).end
     const target = dir > 0
       ? comments.find(c => c.start > after) ?? comments[0]
@@ -485,7 +498,7 @@
     setCursor(target.start)
   }
   function view(rendered) {
-    if (rendered && !hasMarked()) return dock('Рендер недоступен: библиотека marked не загрузилась. Нужна сеть.')
+    if (rendered && !hasMarked()) return dock(T('Рендер недоступен: библиотека marked не загрузилась. Нужна сеть.', 'Rendering is unavailable: the marked library did not load. It needs the network.'))
     st.rendered = rendered
     st.anchor = null
     render()
@@ -493,7 +506,7 @@
   }
 
   async function copyPrompt() {
-    if (comments.length === 0) return dock('Нечего копировать: комментариев нет.')
+    if (comments.length === 0) return dock(T('Нечего копировать: комментариев нет.', 'Nothing to copy: no comments.'))
     const text = promptOf()
     let copied = false
     try {
@@ -507,14 +520,14 @@
       try { copied = document.execCommand('copy') } catch {}
       area.remove()
     }
-    if (copied) return dock('Скопировано. Вставьте в поле ввода Claude Code (⌘V) и нажмите Enter.', true)
+    if (copied) return dock(T('Скопировано. Вставьте в поле ввода Claude Code (⌘V) и нажмите Enter.', "Copied. Paste it into Claude Code's prompt box (⌘V) and press Enter."), true)
     togglePrompt(true)
     getSelection().selectAllChildren($('prompt'))
-    dock('Браузер не дал скопировать: промпт выделен, нажмите ⌘C.')
+    dock(T('Браузер не дал скопировать: промпт выделен, нажмите ⌘C.', 'The browser refused to copy: the prompt is selected, press ⌘C.'))
   }
   function togglePrompt(show = $('prompt').hidden) {
     $('prompt').hidden = !show
-    $('show').textContent = show ? 'Скрыть промпт' : 'Показать промпт'
+    $('show').textContent = show ? T('Скрыть промпт', 'Hide prompt') : T('Показать промпт', 'Show prompt')
   }
 
   sheet.addEventListener('pointerdown', e => {
@@ -577,8 +590,8 @@
       KeyG: () => setCursor(e.shiftKey ? lines.length : 0), Home: () => setCursor(0), End: () => setCursor(lines.length),
       KeyV: () => { st.anchor = st.anchor === null ? st.cursor : null; paint() },
       Enter: () => startDraft(rangeNow()), NumpadEnter: () => startDraft(rangeNow()), KeyC: () => startDraft(rangeNow()),
-      KeyE: () => { const c = atCursor(); c ? startEdit(c) : dock('На этой строке нет комментария.') },
-      KeyD: () => { const c = atCursor(); c ? remove(c.id) : dock('На этой строке нет комментария.') },
+      KeyE: () => { const c = atCursor(); c ? startEdit(c) : dock(T('На этой строке нет комментария.', 'No comment on this line.')) },
+      KeyD: () => { const c = atCursor(); c ? remove(c.id) : dock(T('На этой строке нет комментария.', 'No comment on this line.')) },
       KeyN: () => jumpNote(e.shiftKey ? -1 : 1),
       KeyM: () => view(!st.rendered),
       KeyS: () => copyPrompt(),
@@ -598,7 +611,7 @@
   $('copy').addEventListener('click', copyPrompt)
 
   $('num').textContent = `#${index}`
-  document.title = `Ответ #${index} · inline-notes`
+  document.title = `${T('Ответ', 'Reply')} #${index} · inline-notes`
   document.documentElement.dataset.theme = data.theme === 'light' ? 'light' : 'dark'
 
   const wantRendered = data.preview === true
